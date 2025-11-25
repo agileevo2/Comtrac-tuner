@@ -1,0 +1,203 @@
+// TEMPORARY FILE: Full-featured import components to add to App.jsx
+// Copy these two components and insert them before CreateWellWizard in App.jsx
+
+// --- COMPONENT: STEP SURVEY IMPORT (WITH DRAG-DROP & EXCEL) ---
+function StepSurveyImport({ onBack, onNext, existingData }) {
+  const [rawText, setRawText] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [config, setConfig] = useState({ startLine: 2, delimiter: 'auto', colMD: 1, colInc: 2, colAzi: 3, unitMultiplier: 1, thousandSep: 'none' });
+  const parsedData = useMemo(() => parseSurveyData(rawText, config), [rawText, config]);
+  const trajectory3D = useMemo(() => calculateTrajectory(parsedData), [parsedData]);
+  const fileInputRef = useRef(null);
+
+  // Pre-fill text area if existing data is present
+  useEffect(() => {
+    if (existingData && existingData.length > 0 && !rawText) {
+      const header = "MD\tInc\tAzi\n";
+      const rows = existingData.map(p => `${p.md}\t${p.inc}\t${p.azi}`).join('\n');
+      setRawText(header + rows);
+      setConfig(prev => ({ ...prev, startLine: 2, delimiter: 'tab' }));
+    }
+  }, [existingData]);
+
+  // Auto-detect startLine
+  useEffect(() => {
+    if (rawText && config.startLine === 2) {
+      const lines = rawText.split('\n');
+      for (let i = 0; i < Math.min(lines.length, 20); i++) {
+        if (/^\s*[\d.,]+\s/.test(lines[i])) {
+          setConfig(prev => ({ ...prev, startLine: i + 1 }));
+          if (lines[i].includes(',') && !lines[i].includes('\t')) {
+            setConfig(prev => ({ ...prev, delimiter: ',' }));
+          }
+          break;
+        }
+      }
+    }
+  }, [rawText]);
+
+  const processFile = async (file) => {
+    if (!file) return;
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+    if (isExcel) {
+      // Dynamic import to avoid loading XLSX unless needed
+      const XLSX = await import('xlsx');
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const text = XLSX.utils.sheet_to_csv(firstSheet, { FS: '\t' });
+        setRawText(text);
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => setRawText(e.target.result);
+      reader.readAsText(file);
+    }
+  };
+
+  const handleDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget.contains(e.relatedTarget)) return; setIsDragging(false); };
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); if (!isDragging) setIsDragging(true); };
+  const handleDrop = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); processFile(e.dataTransfer.files[0]); };
+  const clearData = () => { setRawText(''); };
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex justify-between items-center mb-4 shrink-0">
+        <h3 className="font-bold text-[#37424A] flex items-center gap-2"><MapPin className="text-[#00A99D]" /> Importér Brønnbane (Survey)</h3>
+        <div className="flex gap-2 text-xs">
+          <button className={`px-3 py-1 rounded border ${config.unitMultiplier === 1 ? 'bg-[#37424A] text-white' : 'bg-white'}`} onClick={() => setConfig({ ...config, unitMultiplier: 1 })}>Meter</button>
+          <button className={`px-3 py-1 rounded border ${config.unitMultiplier !== 1 ? 'bg-[#37424A] text-white' : 'bg-white'}`} onClick={() => setConfig({ ...config, unitMultiplier: 0.3048 })}>Fot (ft)</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-grow min-h-0">
+        <div className="flex flex-col gap-4 h-full">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4 shrink-0">
+            <div className="grid grid-cols-2 gap-4">
+              <div><label className="text-[10px] uppercase font-bold text-gray-500">Start på linje</label><input type="number" className="w-full p-2 border rounded text-sm bg-white" value={config.startLine} onChange={e => setConfig({ ...config, startLine: isNaN(parseInt(e.target.value)) ? 1 : parseInt(e.target.value) })} /></div>
+              <div><label className="text-[10px] uppercase font-bold text-gray-500">Skilletegn</label><select className="w-full p-2 border rounded text-sm bg-white" value={config.delimiter} onChange={e => setConfig({ ...config, delimiter: e.target.value })}><option value="auto">Auto (Space/Tab)</option><option value="tab">Tabulator</option><option value=",">Komma (,)</option><option value=";">Semikolon (;)</option></select></div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div><label className="text-[10px] uppercase font-bold text-gray-500">Tusenskilletegn</label><select className="w-full p-2 border rounded text-sm bg-white" value={config.thousandSep} onChange={e => setConfig({ ...config, thousandSep: e.target.value })}><option value="none">Ingen</option><option value="space">Mellomrom (1 000)</option><option value=".">Punktum (1.000)</option><option value=",">Komma (1,000)</option></select></div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div><label className="text-[10px] uppercase font-bold text-gray-500">MD Kol</label><input type="number" className="w-full p-2 border rounded text-sm bg-white" value={config.colMD} onChange={e => setConfig({ ...config, colMD: parseInt(e.target.value) })} /></div>
+              <div><label className="text-[10px] uppercase font-bold text-gray-500">Inc Kol</label><input type="number" className="w-full p-2 border rounded text-sm bg-white" value={config.colInc} onChange={e => setConfig({ ...config, colInc: parseInt(e.target.value) })} /></div>
+              <div><label className="text-[10px] uppercase font-bold text-gray-500">Azi Kol</label><input type="number" className="w-full p-2 border rounded text-sm bg-white" value={config.colAzi} onChange={e => setConfig({ ...config, colAzi: parseInt(e.target.value) })} /></div>
+            </div>
+          </div>
+          <div className={`flex-grow relative border-2 border-dashed rounded-lg transition-colors min-h-[200px] group ${isDragging ? 'border-[#00A99D] bg-teal-50' : 'border-gray-300 bg-gray-50 hover:bg-white'}`} onDrop={handleDrop} onDragOver={handleDragOver} onDragEnter={handleDragEnter} onDragLeave={handleDragLeave}>
+            {isDragging && (<div className="absolute inset-0 flex items-center justify-center bg-white/90 z-50 pointer-events-none rounded-lg"><p className="text-[#00A99D] font-bold text-lg">Slipp filen for å erstatte nåværende data</p></div>)}
+            <textarea className="absolute inset-0 w-full h-full p-4 bg-transparent resize-none font-mono text-xs outline-none z-10" value={rawText} onChange={e => setRawText(e.target.value)} placeholder=" " />
+            {!rawText && (<div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"><div className="text-center pointer-events-auto"><FileSpreadsheet size={32} className="mx-auto mb-2 group-hover:text-[#37424A] transition-colors text-gray-400" /><p className="mb-2 text-gray-400">Dra og slipp tekst/excel fil her</p><button onClick={() => fileInputRef.current?.click()} className="bg-white border border-gray-300 px-3 py-1 rounded text-xs font-bold hover:bg-gray-50 shadow-sm cursor-pointer pointer-events-auto relative z-30">Eller velg fil</button><input type="file" ref={fileInputRef} className="hidden" accept=".txt,.csv,.xlsx,.xls" onChange={(e) => processFile(e.target.files[0])} /></div></div>)}
+            {rawText && (<button onClick={clearData} className="absolute top-2 right-2 z-40 p-1 bg-white rounded-full shadow border border-gray-200 text-gray-400 hover:text-red-500" title="Tøm innhold"><X size={14} /></button>)}
+          </div>
+        </div>
+        <div className="flex flex-col gap-4 h-full min-h-0">
+          <div className="bg-white border rounded-lg flex-1 overflow-hidden flex flex-col">
+            <div className="bg-gray-100 p-2 text-xs font-bold text-gray-600 border-b flex justify-between shrink-0"><span>Datapunkter</span>{parsedData.length > 0 && <span className="text-[#00A99D] flex items-center gap-1"><Check size={12} /> {parsedData.length} rader</span>}</div>
+            <div className="flex-grow overflow-auto"><table className="w-full text-xs text-right"><thead className="bg-gray-50 sticky top-0"><tr><th className="p-2 text-gray-500">#</th><th className="p-2 text-[#37424A]">MD (m)</th><th className="p-2 text-[#37424A]">Inc (deg)</th><th className="p-2 text-[#37424A]">Azi (deg)</th></tr></thead><tbody className="font-mono">{parsedData.map((row, i) => (<tr key={i} className="border-b border-gray-100 hover:bg-yellow-50"><td className="p-2 text-gray-400">{i + 1}</td><td className="p-2">{row.md}</td><td className="p-2">{row.inc}</td><td className="p-2">{row.azi}</td></tr>))}</tbody></table></div>
+          </div>
+          <div className="bg-white border rounded-lg flex-1 flex flex-col overflow-hidden">
+            <div className="bg-gray-100 p-2 text-xs font-bold text-gray-600 border-b flex justify-between items-center shrink-0"><span>Banevisualisering (3D)</span></div>
+            <div className="flex-grow relative border border-gray-200 h-[400px]">{parsedData.length === 0 ? (<div className="absolute inset-0 flex items-center justify-center text-gray-300 text-xs">Ingen data å vise</div>) : (<div className="absolute inset-0 bg-white"><WellBore3D points={trajectory3D} /></div>)}</div>
+          </div>
+        </div>
+      </div>
+      <div className="flex justify-between pt-6 mt-2 border-t shrink-0">
+        <button onClick={onBack} className="text-gray-500 font-medium">Tilbake</button>
+        <button onClick={() => onNext(parsedData)} disabled={parsedData.length === 0} className={`px-6 py-2 rounded font-bold transition-colors ${parsedData.length > 0 ? 'bg-[#37424A] text-white hover:bg-slate-700' : 'bg-gray-200 text-gray-400'}`}>Bekreft Survey & Gå Videre</button>
+      </div>
+    </div>
+  );
+}
+
+// --- COMPONENT: STEP ARCHITECTURE IMPORT (WITH UNIT TOGGLING & ID CALC) ---
+function StepArchitectureImport({ onBack, onFinish, surveyData, initialData, maxDepth }) {
+  const [sections, setSections] = useState([]);
+  const [units, setUnits] = useState({ depth: 'm', id: 'cm', od: 'cm', weight: 'kg/m' });
+
+  useEffect(() => {
+    if (initialData && initialData.length > 0) setSections(initialData);
+  }, [initialData]);
+
+  const toggleUnit = (key) => {
+    let nextUnits = { ...units };
+    let currentUnit = units[key];
+    let newUnit = currentUnit;
+    let conversionFactor = 1;
+    if (key === 'depth') { if (currentUnit === 'm') { newUnit = 'ft'; conversionFactor = 3.28084; } else { newUnit = 'm'; conversionFactor = 1 / 3.28084; } }
+    else if (key === 'id' || key === 'od') { if (currentUnit === 'cm') { newUnit = 'in'; conversionFactor = 1 / 2.54; } else { newUnit = 'cm'; conversionFactor = 2.54; } }
+    else if (key === 'weight') { if (currentUnit === 'kg/m') { newUnit = 'lb/ft'; conversionFactor = 0.671969; } else { newUnit = 'kg/m'; conversionFactor = 1 / 0.671969; } }
+    nextUnits[key] = newUnit;
+    setUnits(nextUnits);
+    const updatedSections = sections.map(sec => {
+      let newSec = { ...sec };
+      if (key === 'depth') { newSec.start = parseFloat((sec.start * conversionFactor).toFixed(2)); newSec.end = parseFloat((sec.end * conversionFactor).toFixed(2)); }
+      else if (key === 'od') { newSec.od = parseFloat((sec.od * conversionFactor).toFixed(3)); newSec.id = calculateIDFromODWeight(newSec.od, newSec.weight, newUnit, units.weight, units.id) || newSec.id; }
+      else if (key === 'id') { newSec.id = parseFloat((sec.id * conversionFactor).toFixed(3)); }
+      else if (key === 'weight') { newSec.weight = parseFloat((sec.weight * conversionFactor).toFixed(2)); newSec.id = calculateIDFromODWeight(newSec.od, newSec.weight, units.od, newUnit, units.id) || newSec.id; }
+      return newSec;
+    });
+    setSections(updatedSections);
+  };
+
+  const addSection = () => {
+    setSections([...sections, { start: sections.length > 0 ? sections[sections.length - 1].end : 0, end: 0, id: 0, od: 0, weight: 0, fricRodRIH: 1.0, fricRodPOOH: 1.0, fricToolRIH: 0.3, fricToolPOOH: 0.3 }]);
+  };
+  const removeSection = (idx) => { const newSec = [...sections]; newSec.splice(idx, 1); setSections(newSec); };
+  const updateSection = (idx, field, value) => {
+    const newSec = [...sections];
+    newSec[idx][field] = parseFloat(value) || 0;
+    if ((field === 'weight' || field === 'od')) {
+      let newID = calculateIDFromODWeight(newSec[idx].od, newSec[idx].weight, units.od, units.weight, units.id);
+      if (newID !== null) newSec[idx].id = newID;
+    }
+    setSections(newSec);
+  };
+
+  const exceedsMaxDepth = sections.some(s => s.end > maxDepth || s.start > maxDepth);
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex justify-between items-center mb-4 shrink-0"><h3 className="font-bold text-[#37424A] text-xl flex items-center gap-2">Brønnarkitektur Seksjoner</h3></div>
+      <div className="flex gap-4 mb-4"><button onClick={addSection} className="bg-[#FFC82E] text-[#37424A] px-4 py-2 rounded font-bold text-xs hover:bg-[#E5B020] transition-colors flex items-center gap-2"><Plus size={16} /> LEGG TIL SEKSJON MANUELT</button></div>
+      <div className="bg-white rounded-lg border border-gray-200 flex flex-col overflow-hidden flex-grow">
+        <div className="flex bg-gray-50 text-gray-500 text-xs font-bold border-b border-gray-200">
+          <div className="p-3 flex-1 border-r border-gray-100 cursor-pointer hover:text-[#37424A]" onClick={() => toggleUnit('depth')}>Fra ({units.depth})</div>
+          <div className="p-3 flex-1 border-r border-gray-100 cursor-pointer hover:text-[#37424A]" onClick={() => toggleUnit('depth')}>Til ({units.depth})</div>
+          <div className="p-3 flex-1 border-r border-gray-100 cursor-pointer hover:text-[#37424A]" onClick={() => toggleUnit('od')}>OD ({units.od})</div>
+          <div className="p-3 flex-1 border-r border-gray-100 cursor-pointer hover:text-[#37424A]" onClick={() => toggleUnit('weight')}>Vekt ({units.weight})</div>
+          <div className="p-3 flex-1 border-r border-gray-100 cursor-pointer hover:text-[#37424A]" onClick={() => toggleUnit('id')}>ID ({units.id})</div>
+          <div className="p-3 flex-1 border-r border-gray-100">Rod RIH µ</div>
+          <div className="p-3 flex-1 border-r border-gray-100">Rod POH µ</div>
+          <div className="p-3 flex-1 border-r border-gray-100">Tool RIH µ</div>
+          <div className="p-3 flex-1 border-r border-gray-100">Tool POOH µ</div>
+          <div className="p-3 w-24 text-center">Handling</div>
+        </div>
+        <div className="overflow-y-auto flex-grow">
+          {sections.map((sec, i) => (
+            <div key={i} className="flex border-b border-gray-100 hover:bg-gray-50 transition-colors items-center">
+              <div className="p-2 flex-1"><input type="number" className={`w-full border rounded px-2 py-1 text-sm ${sec.start > maxDepth ? 'border-red-500 bg-red-50' : 'border-gray-300'}`} value={sec.start} onChange={e => updateSection(i, 'start', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" className={`w-full border rounded px-2 py-1 text-sm ${sec.end > maxDepth ? 'border-red-500 bg-red-50' : 'border-gray-300'}`} value={sec.end} onChange={e => updateSection(i, 'end', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={sec.od} onChange={e => updateSection(i, 'od', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={sec.weight} onChange={e => updateSection(i, 'weight', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" className="w-full border border-gray-300 rounded px-2 py-1 text-sm font-bold text-[#37424A]" value={sec.id} onChange={e => updateSection(i, 'id', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" step="0.1" className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-center" value={sec.fricRodRIH} onChange={e => updateSection(i, 'fricRodRIH', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" step="0.1" className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-center" value={sec.fricRodPOOH} onChange={e => updateSection(i, 'fricRodPOOH', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" step="0.1" className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-center" value={sec.fricToolRIH} onChange={e => updateSection(i, 'fricToolRIH', e.target.value)} /></div>
+              <div className="p-2 flex-1"><input type="number" step="0.1" className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-center" value={sec.fricToolPOOH} onChange={e => updateSection(i, 'fricToolPOOH', e.target.value)} /></div>
+              <div className="p-2 w-24 flex justify-center"><button onClick={() => removeSection(i)} className="text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></div>
+            </div>
+          ))}
+          {sections.length === 0 && (<div className="p-8 text-center text-gray-400 text-sm flex flex-col items-center justify-center h-full"><Layers size={32} className="mb-2 opacity-20" />Ingen seksjoner lagt til. Trykk "Legg til seksjon manuelt" for å starte.</div>)}
+        </div>
+      </div>
+      {exceedsMaxDepth && <div className="mt-2 text-red-500 font-bold text-sm flex items-center gap-2"><AlertTriangle size={16} /> Lengden på brønnarkitekturen kan ikke være lengre enn brønnen som er {maxDepth.toFixed(0)}m.</div>}
+      <div className="flex justify-between pt-6 mt-2 border-t shrink-0"><button onClick={onBack} className="text-gray-500 font-medium">Tilbake</button><button onClick={() => onFinish(sections)} disabled={sections.length === 0 || exceedsMaxDepth} className={`px-6 py-2 rounded font-bold flex items-center gap-2 transition-colors ${sections.length > 0 && !exceedsMaxDepth ? 'bg-[#37424A] text-white hover:bg-slate-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}><Save size={18} /> Lagre Brønn</button></div>
+    </div>
+  );
+}
