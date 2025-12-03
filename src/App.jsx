@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Scatter, ComposedChart, AreaChart, Area, ReferenceLine, ReferenceArea, ScatterChart
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Scatter, ComposedChart, AreaChart, Area, ReferenceLine, ReferenceArea, ScatterChart, ReferenceDot
 } from 'recharts';
 import {
   Upload, FileText, Activity, Plus, Search, ChevronRight, Save,
   TrendingUp, Settings, MapPin, Info, Edit2, Check, ArrowRight, Database, Layers, Trash2, Box, Grid, Maximize2, Calculator, Copy, RefreshCw, FileSpreadsheet, X, Droplet, Thermometer, Anchor, ChevronDown, ChevronUp, AlertTriangle, Circle, MoreHorizontal, Truck, ArrowUp, ArrowDown, Download, PlayCircle, Briefcase, Share2, MousePointer,
-  Loader2, AlertCircle
+  Loader2, AlertCircle, Scissors
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import {
-  collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query
+  collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, getDoc
 } from 'firebase/firestore';
 import {
   signInAnonymously, signInWithCustomToken, onAuthStateChanged
@@ -19,7 +19,8 @@ import {
 // --- LOCAL IMPORTS ---
 import { auth, db, appId } from './firebaseConfig';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import FieldPortalDashboard from './FieldPortalDashboard';
 
 // --- ARCHER BRAND COLORS ---
 const COLORS = {
@@ -374,112 +375,135 @@ const WellBore3D = ({ points, architecture }) => {
   useEffect(() => {
     if (!libLoaded || !containerRef.current || points.length < 2) return;
 
-    const w = containerRef.current.clientWidth;
-    const h = containerRef.current.clientHeight;
+    try {
+      const w = containerRef.current.clientWidth;
+      const h = containerRef.current.clientHeight;
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xffffff);
-    const camera = new THREE.PerspectiveCamera(45, w / h, 1, 50000);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xffffff);
+      const camera = new THREE.PerspectiveCamera(45, w / h, 1, 50000);
 
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
-    points.forEach(p => {
-      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-      if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
-    });
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const centerZ = (minZ + maxZ) / 2;
-    const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      points.forEach(p => {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+      });
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+      const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
 
-    camera.position.set(centerX + maxDim * 1.5, centerY + maxDim * 0.5, centerZ + maxDim * 1.5);
-    camera.lookAt(centerX, centerY, centerZ);
+      camera.position.set(centerX + maxDim * 1.5, centerY + maxDim * 0.5, centerZ + maxDim * 1.5);
+      camera.lookAt(centerX, centerY, centerZ);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(w, h);
-    containerRef.current.innerHTML = '';
-    containerRef.current.appendChild(renderer.domElement);
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(w, h);
+      containerRef.current.innerHTML = '';
+      containerRef.current.appendChild(renderer.domElement);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(centerX, centerY, centerZ);
-    controls.update();
-
-    const grid = new THREE.GridHelper(10000, 100, 0xdddddd, 0xeeeeee);
-    grid.position.y = minY - 100;
-    scene.add(grid);
-    const axes = new THREE.AxesHelper(1000);
-    scene.add(axes);
-
-    // Points geometry for Raycasting
-    const geometry = new THREE.BufferGeometry();
-    const vertices = [];
-    points.forEach(p => vertices.push(p.x, p.y, p.z));
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-
-    const material = new THREE.LineBasicMaterial({ color: 0x37424A, linewidth: 2 });
-    const line = new THREE.Line(geometry, material);
-    scene.add(line);
-
-    // Raycaster setup
-    const raycaster = new THREE.Raycaster();
-    raycaster.params.Line.threshold = 5; // Tolerance for clicking line
-    const mouse = new THREE.Vector2();
-
-    const onMouseMove = (event) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-      raycaster.setFromCamera(mouse, camera);
-      const intersects = raycaster.intersectObject(line);
-
-      if (intersects.length > 0) {
-        const intersect = intersects[0];
-        // Map intersect index to points array (approximate)
-        const idx = Math.floor(intersect.index); // closest point index
-        if (points[idx]) {
-          const p = points[idx];
-          // Find ID from architecture
-          const section = architecture?.find(s => p.md >= s.start && p.md <= s.end);
-          setHoverInfo({
-            x: event.clientX - rect.left,
-            y: event.clientY - rect.top,
-            md: p.md,
-            tvd: p.tvd,
-            id: section ? section.id : '-'
-          });
-        }
+      // Check if OrbitControls is available
+      if (typeof OrbitControls === 'function') {
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(centerX, centerY, centerZ);
+        controls.update();
       } else {
-        setHoverInfo(null);
+        console.warn('OrbitControls not loaded correctly');
       }
-    };
 
-    renderer.domElement.addEventListener('mousemove', onMouseMove);
+      const grid = new THREE.GridHelper(10000, 100, 0xdddddd, 0xeeeeee);
+      grid.position.y = minY - 100;
+      scene.add(grid);
+      const axes = new THREE.AxesHelper(1000);
+      scene.add(axes);
 
-    let animationId;
-    const animate = () => {
-      animationId = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
+      // Points geometry for Raycasting
+      const geometry = new THREE.BufferGeometry();
+      const vertices = [];
+      points.forEach(p => vertices.push(p.x, p.y, p.z));
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
 
-    const handleResize = () => {
-      if (!containerRef.current) return;
-      const newW = containerRef.current.clientWidth;
-      const newH = containerRef.current.clientHeight;
-      camera.aspect = newW / newH;
-      camera.updateProjectionMatrix();
-      renderer.setSize(newW, newH);
-    };
+      const material = new THREE.LineBasicMaterial({ color: 0x37424A, linewidth: 2 });
+      const line = new THREE.Line(geometry, material);
+      scene.add(line);
 
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      renderer.domElement.removeEventListener('mousemove', onMouseMove);
-      cancelAnimationFrame(animationId);
-      renderer.dispose();
-    };
+      // Marker for hover
+      const markerGeometry = new THREE.SphereGeometry(5, 16, 16); // Adjust size as needed
+      const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xFFC82E });
+      const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+      marker.visible = false;
+      scene.add(marker);
+
+      // Raycaster setup
+      const raycaster = new THREE.Raycaster();
+      raycaster.params.Line.threshold = 10; // Increased threshold for easier hovering
+      const mouse = new THREE.Vector2();
+
+      const onMouseMove = (event) => {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(line);
+
+        if (intersects.length > 0) {
+          const intersect = intersects[0];
+          const idx = Math.floor(intersect.index);
+          if (points[idx]) {
+            const p = points[idx];
+            const section = architecture?.find(s => p.md >= s.start && p.md <= s.end);
+
+            // Update marker
+            marker.position.set(intersect.point.x, intersect.point.y, intersect.point.z);
+            marker.visible = true;
+
+            setHoverInfo({
+              x: event.clientX - rect.left,
+              y: event.clientY - rect.top,
+              md: p.md,
+              tvd: p.tvd,
+              id: section ? section.id : '-'
+            });
+          }
+        } else {
+          setHoverInfo(null);
+          marker.visible = false;
+        }
+      };
+
+      renderer.domElement.addEventListener('mousemove', onMouseMove);
+
+      let animationId;
+      const animate = () => {
+        animationId = requestAnimationFrame(animate);
+        // controls.update(); // Only needed if damping is enabled, but good practice
+        renderer.render(scene, camera);
+      };
+      animate();
+
+      const handleResize = () => {
+        if (!containerRef.current) return;
+        const newW = containerRef.current.clientWidth;
+        const newH = containerRef.current.clientHeight;
+        camera.aspect = newW / newH;
+        camera.updateProjectionMatrix();
+        renderer.setSize(newW, newH);
+      };
+
+      window.addEventListener('resize', handleResize);
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        renderer.domElement.removeEventListener('mousemove', onMouseMove);
+        cancelAnimationFrame(animationId);
+        renderer.dispose();
+      };
+    } catch (err) {
+      console.error("Error initializing 3D viewer:", err);
+      if (containerRef.current) {
+        containerRef.current.innerHTML = `<div class="h-full flex items-center justify-center text-red-500 text-xs">Feil ved lasting av 3D visning: ${err.message}</div>`;
+      }
+    }
   }, [libLoaded, points, architecture]);
 
   if (!libLoaded) return <div className="h-full flex items-center justify-center text-gray-400">Laster 3D motor...</div>;
@@ -505,6 +529,626 @@ const WellBore3D = ({ points, architecture }) => {
   );
 };
 
+// --- NEW FEATURE: FIELD PORTAL ---
+function FieldPortal({ well, run }) {
+  if (!well || !run) return <div className="p-8 text-center text-gray-500">Fant ikke data for dette runnet.</div>;
+
+  const maxDepth = Math.max(...well.survey.map(p => p.md), 0);
+  const trajectory = calculateTrajectory(well.survey);
+  const maxTVD = trajectory.length > 0 ? Math.max(...trajectory.map(t => t.tvd)) : maxDepth;
+  const targetDepth = run.general?.targetDepth || maxDepth;
+
+  // Calculate fluid levels in MD
+  const gasFluid = run.fluids?.list?.find(f => f.type === 'Gass') || { sg: 0, percent: 0 };
+  const oilFluid = run.fluids?.list?.find(f => f.type === 'Olje') || { sg: 0, percent: 0 };
+  const waterFluid = run.fluids?.list?.find(f => f.type === 'Vann') || { sg: 0, percent: 0 };
+
+  // Convert vertical height percentages to MD (approximation using maxTVD)
+  const gasTopMD = maxDepth - ((gasFluid.percent / 100) * maxTVD);
+  const oilTopMD = gasTopMD - ((oilFluid.percent / 100) * maxTVD);
+  const waterTopMD = oilTopMD - ((waterFluid.percent / 100) * maxTVD);
+
+  // Max temperature
+  const maxTemp = run.temps?.length > 0 ? Math.max(...run.temps.map(t => parseFloat(t.temp) || 0)) : 0;
+
+  // Tractor info
+  const tractorTools = run.bha?.tools?.filter(t => t.isTractor) || [];
+  const tractorForce = tractorTools.length > 0 ? tractorTools[0].tractorForce : 0;
+
+  // Collapsible sections state
+  const [expanded, setExpanded] = useState({
+    pce: false,
+    fluids: false,
+    temp: false,
+    bha: false,
+    tractor: false,
+    tubing: false,
+    rod: false,
+    pickup: false
+  });
+
+  // Pickup weights state - now with type (RIH/POOH)
+  const [pickupWeights, setPickupWeights] = useState(run.pickupWeights || []);
+
+  const toggleSection = (section) => {
+    setExpanded(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  // Save pickup weights to Firebase
+  const savePickupWeights = async (newWeights) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const runRef = doc(db, 'artifacts', appId, 'users', user.uid, 'wells', well.id);
+      const wellDoc = await getDoc(runRef);
+      if (wellDoc.exists()) {
+        const wellData = wellDoc.data();
+        const updatedJobs = (wellData.jobs || []).map(j =>
+          j.id === run.id ? { ...j, pickupWeights: newWeights } : j
+        );
+        await updateDoc(runRef, { jobs: updatedJobs });
+      }
+    } catch (e) {
+      console.error('Error saving pickup weights:', e);
+    }
+  };
+
+  const handleAddPickupRow = () => {
+    const newWeights = [...pickupWeights, { md: 0, weight: 0, type: 'RIH' }];
+    setPickupWeights(newWeights);
+    savePickupWeights(newWeights);
+  };
+
+  const handleUpdatePickup = (index, field, value) => {
+    const newWeights = pickupWeights.map((pw, i) => {
+      if (i !== index) return pw;
+      // Handle type field as string, others as numbers
+      if (field === 'type') {
+        return { ...pw, type: value };
+      }
+      return { ...pw, [field]: parseFloat(value) || 0 };
+    });
+    setPickupWeights(newWeights);
+    savePickupWeights(newWeights);
+  };
+
+  const handleDeletePickup = (index) => {
+    const newWeights = pickupWeights.filter((_, i) => i !== index);
+    setPickupWeights(newWeights);
+    savePickupWeights(newWeights);
+  };
+
+  // Pressure Adjustment State
+  const [pressureAdj, setPressureAdj] = useState(run.pressureAdjustment || { enabled: false, adjustedWHP: run.fluids?.whp || 0 });
+
+  // Calculate Offset
+  const originalWHP = run.fluids?.whp || 0;
+  const rodDiameter = run.rod?.diameter || 0; // cm
+  const rodArea = Math.PI * Math.pow((rodDiameter / 100 / 2), 2); // m^2
+
+  // Force = Pressure (Pa) * Area (m^2)
+  // Pressure Diff = (Adjusted - Original) * 100,000 (bar to Pa)
+  const pressureDiff = ((parseFloat(pressureAdj.adjustedWHP) || 0) - originalWHP) * 100000;
+  const forceOffsetN = pressureDiff * rodArea;
+  const weightOffsetKg = forceOffsetN / 9.81;
+
+  const savePressureAdjustment = async (newAdj) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const runRef = doc(db, 'artifacts', appId, 'users', user.uid, 'wells', well.id);
+      const wellDoc = await getDoc(runRef);
+      if (wellDoc.exists()) {
+        const wellData = wellDoc.data();
+        const updatedJobs = (wellData.jobs || []).map(j =>
+          j.id === run.id ? { ...j, pressureAdjustment: newAdj } : j
+        );
+        await updateDoc(runRef, { jobs: updatedJobs });
+      }
+    } catch (e) {
+      console.error('Error saving pressure adjustment:', e);
+    }
+  };
+
+  const handlePressureChange = (field, value) => {
+    const newAdj = { ...pressureAdj, [field]: value };
+    setPressureAdj(newAdj);
+    savePressureAdjustment(newAdj);
+  };
+
+  // Adjust Chart Data
+  const chartData = useMemo(() => {
+    if (!run.simulations?.chartData) return [];
+    if (!pressureAdj.enabled) return run.simulations.chartData;
+
+    return run.simulations.chartData.map(d => ({
+      ...d,
+      rih_standard_1: d.rih_standard_1 !== null ? d.rih_standard_1 + weightOffsetKg : null,
+      rih_standard_2: d.rih_standard_2 !== null ? d.rih_standard_2 + weightOffsetKg : null,
+      rih_tractor: d.rih_tractor !== null ? d.rih_tractor + weightOffsetKg : null,
+      pooh: d.pooh !== null ? d.pooh + weightOffsetKg : null
+    }));
+  }, [run.simulations?.chartData, pressureAdj.enabled, weightOffsetKg]);
+
+  return (
+    <div className="max-w-6xl mx-auto bg-white shadow-lg rounded-lg overflow-hidden my-8 border border-gray-200">
+      {/* Header */}
+      <div className="bg-[#37424A] text-white p-6">
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-2xl font-bold mb-1">{well.name}</h1>
+            <h2 className="text-lg text-[#FFC82E] font-medium">{run.bha?.name || 'Uten navn'}</h2>
+            <div className="text-sm text-gray-400 mt-1">{well.operator}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Dato</div>
+            <div className="font-bold">{run.date || new Date().toLocaleDateString()}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Permanent Header Info */}
+      <div className="p-4 bg-gray-50 border-b">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div><span className="text-gray-500">RIG:</span> <span className="font-bold">{well.rig || well.field || '-'}</span></div>
+          <div><span className="text-gray-500">Brønn:</span> <span className="font-bold">{well.name}</span></div>
+          <div><span className="text-gray-500">Mål:</span> <span className="font-bold">{run.general?.goal || '-'}</span></div>
+          <div><span className="text-gray-500">Måldybde:</span> <span className="font-bold">{targetDepth} m</span></div>
+        </div>
+      </div>
+
+      {/* Pickup Weights - Above Graph */}
+      <div className="p-4 bg-white border-b">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-[#37424A] flex items-center gap-2">
+            <Database size={18} /> Pickup Vekter (RIG)
+          </h3>
+          <button
+            onClick={() => toggleSection('pickup')}
+            className="text-sm text-gray-500 hover:text-[#37424A]"
+          >
+            {expanded.pickup ? 'Skjul' : 'Vis'}
+          </button>
+        </div>
+        {expanded.pickup && (
+          <div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border">
+                <thead className="bg-gray-100 text-xs text-gray-500 uppercase">
+                  <tr>
+                    <th className="p-2 text-left">MD (m)</th>
+                    <th className="p-2 text-left">Vekt (kg)</th>
+                    <th className="p-2 text-left">Type</th>
+                    <th className="p-2 text-left">Avvik (kg)</th>
+                    <th className="p-2 text-left">Handlinger</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white">
+                  {pickupWeights.length === 0 ? (
+                    <tr>
+                      <td colSpan="5" className="p-4 text-center text-gray-400">Ingen pickup-vekter registrert ennå</td>
+                    </tr>
+                  ) : (
+                    pickupWeights.map((pw, i) => {
+                      const simData = chartData.find(d => Math.abs(d.md - pw.md) < 50) || {};
+                      const simValue = pw.type === 'RIH' ? (simData.rih_standard_1 || simData.rih_standard_2 || simData.rih_tractor) : simData.pooh;
+                      const deviation = simValue !== null && simValue !== undefined ? pw.weight - simValue : null;
+
+                      return (
+                        <tr key={i} className="border-b last:border-0">
+                          <td className="p-2">
+                            <input
+                              type="number"
+                              className="w-full border rounded px-2 py-1 text-sm"
+                              value={pw.md}
+                              onChange={(e) => handleUpdatePickup(i, 'md', e.target.value)}
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="number"
+                              className="w-full border rounded px-2 py-1 text-sm"
+                              value={pw.weight}
+                              onChange={(e) => handleUpdatePickup(i, 'weight', e.target.value)}
+                            />
+                          </td>
+                          <td className="p-2">
+                            <select
+                              className="w-full border rounded px-2 py-1 text-sm"
+                              value={pw.type || 'RIH'}
+                              onChange={(e) => handleUpdatePickup(i, 'type', e.target.value)}
+                            >
+                              <option value="RIH">RIH</option>
+                              <option value="POOH">POOH</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            {deviation !== null ? (
+                              <span className={`font-bold ${Math.abs(deviation) > 50 ? 'text-red-600' : 'text-green-600'}`}>
+                                {deviation > 0 ? '+' : ''}{deviation.toFixed(1)}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="p-2">
+                            <button
+                              onClick={() => handleDeletePickup(i)}
+                              className="text-red-600 hover:text-red-800 text-xs font-bold"
+                            >
+                              Slett
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <button
+              onClick={handleAddPickupRow}
+              className="mt-3 px-4 py-2 bg-[#37424A] text-white text-sm font-bold rounded hover:bg-[#2c353b] transition"
+            >
+              + Legg til rad
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Graph Section */}
+      <div className="p-4 bg-white border-b">
+        <h3 className="font-bold text-[#37424A] mb-3 flex items-center gap-2">
+          <Activity size={18} /> Surface Weight vs MD
+          {pressureAdj.enabled && (
+            <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded border border-red-200 font-normal">
+              Justert for trykk ({weightOffsetKg > 0 ? '+' : ''}{weightOffsetKg.toFixed(1)} kg)
+            </span>
+          )}
+        </h3>
+        {pressureAdj.enabled && (
+          <div className="mb-4 bg-red-50 border-l-4 border-red-500 p-4 rounded-r">
+            <div className="flex items-start">
+              <AlertTriangle className="text-red-500 mr-3 mt-0.5" size={20} />
+              <div>
+                <h4 className="text-red-800 font-bold text-sm">Grafen er justert!</h4>
+                <p className="text-red-700 text-sm mt-1">
+                  Alle verdier er forskjøvet med <span className="font-bold">{weightOffsetKg.toFixed(1)} kg</span> basert på justert brønntrykk ({pressureAdj.adjustedWHP} bar).
+                  Dette er en manuell overstyring.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="h-[600px] w-full bg-white rounded border border-gray-200 p-4">
+          {chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                <XAxis
+                  dataKey="md"
+                  type="number"
+                  domain={[0, 'auto']}
+                  ticks={Array.from({ length: Math.ceil((chartData[chartData.length - 1]?.md || 8000) / 100) + 1 }, (_, i) => i * 100)}
+                  label={{ value: 'MD (m)', position: 'insideBottom', offset: -10, style: { fill: '#6B7280', fontSize: 12 } }}
+                  tick={{ fontSize: 10, fill: '#6B7280' }}
+                />
+                <YAxis
+                  ticks={Array.from({ length: 41 }, (_, i) => i * 100 - 1000)}
+                  domain={['auto', 'auto']}
+                  label={{ value: 'Surface Weight (kg)', angle: -90, position: 'insideLeft', style: { fill: '#6B7240', fontSize: 12 } }}
+                  tick={{ fontSize: 10, fill: '#6B7280' }}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: '4px', border: '1px solid #E5E7EB', fontSize: '12px' }}
+                  itemStyle={{ padding: 0 }}
+                />
+                <Legend verticalAlign="top" height={36} iconType="plainline" wrapperStyle={{ fontSize: '12px' }} />
+                <Line type="monotone" dataKey="rih_standard_1" stroke="#1E40AF" name="RIH (Standard)" dot={false} strokeWidth={2} connectNulls />
+                <Line type="monotone" dataKey="rih_tractor" stroke="#1E40AF" strokeDasharray="5 5" name="RIH (Tractor)" dot={false} strokeWidth={2} connectNulls />
+                <Line type="monotone" dataKey="rih_standard_2" stroke="#1E40AF" name="RIH (Standard)" dot={false} strokeWidth={2} connectNulls legendType="none" />
+                <Line type="monotone" dataKey="pooh" stroke="#10B981" name="POOH" dot={false} strokeWidth={2} connectNulls />
+                {/* Pickup weights scatter */}
+                {pickupWeights.map((pw, i) => (
+                  <ReferenceDot key={i} x={pw.md} y={pw.weight} r={5} fill="#EF4444" stroke="#991B1B" strokeWidth={2} />
+                ))}
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center text-gray-400">
+              <Activity size={48} className="mb-2 opacity-20" />
+              <p>Ingen grafdata tilgjengelig.</p>
+              <p className="text-xs">Kjør simulering og lagre runnet for å se grafen her.</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Collapsible Sections */}
+      <div className="p-4 space-y-2">
+
+        {/* Pressure Control Equipment */}
+        <div className="border rounded">
+          <button
+            onClick={() => toggleSection('pce')}
+            className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Settings size={16} className="text-gray-600" />
+              <span className="font-bold text-[#37424A]">Pressure Control Equipment</span>
+            </div>
+            {expanded.pce ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+          {expanded.pce && (
+            <div className="p-3 border-t bg-gray-50">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                <div><span className="text-gray-500">PCE Type:</span> <span className="font-bold">{run.pce?.type || '-'}</span></div>
+                <div><span className="text-gray-500">Kontakt Kraft:</span> <span className="font-bold">{run.pce?.force || 0} N</span></div>
+                <div><span className="text-gray-500">Friksjonsfaktor:</span> <span className="font-bold">{run.pce?.friction || 0}</span></div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Brønnvæske og Trykk */}
+        <div className="border rounded">
+          <button
+            onClick={() => toggleSection('fluids')}
+            className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Droplet size={16} className="text-gray-600" />
+              <span className="font-bold text-[#37424A]">Brønnvæske og Trykk</span>
+            </div>
+            {expanded.fluids ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+          {expanded.fluids && (
+            <div className="p-3 border-t bg-gray-50">
+              <div className="mb-3 text-sm">
+                <span className="text-gray-500">WHP:</span> <span className="font-bold">{run.fluids?.whp || 0} bar</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs font-bold text-gray-500 uppercase mb-1">Spesifikk Vekt</div>
+                  <div className="space-y-0.5 text-sm">
+                    <div className="flex gap-2"><span className="text-gray-500">SG Gass:</span> <span className="font-bold">{gasFluid.sg.toFixed(2)}</span></div>
+                    <div className="flex gap-2"><span className="text-gray-500">SG Olje:</span> <span className="font-bold">{oilFluid.sg.toFixed(2)}</span></div>
+                    <div className="flex gap-2"><span className="text-gray-500">SG Vann:</span> <span className="font-bold">{waterFluid.sg.toFixed(2)}</span></div>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-gray-500 uppercase mb-1">Væskenivå (MD)</div>
+                  <div className="space-y-0.5 text-sm">
+                    <div className="flex gap-2"><span className="text-gray-500">Nivå Gass:</span> <span className="font-bold">{gasFluid.percent > 0 ? gasTopMD.toFixed(0) + ' m' : '-'}</span></div>
+                    <div className="flex gap-2"><span className="text-gray-500">Nivå Olje:</span> <span className="font-bold">{oilFluid.percent > 0 ? oilTopMD.toFixed(0) + ' m' : '-'}</span></div>
+                    <div className="flex gap-2"><span className="text-gray-500">Nivå Vann:</span> <span className="font-bold">{waterFluid.percent > 0 ? waterTopMD.toFixed(0) + ' m' : '-'}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pressure Adjustment Section */}
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-bold text-[#37424A] flex items-center gap-2 text-sm">
+                    <Settings size={14} /> Juster Brønntrykk (Simulering)
+                  </h4>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">{pressureAdj.enabled ? 'Aktivert' : 'Deaktivert'}</span>
+                    <button
+                      onClick={() => handlePressureChange('enabled', !pressureAdj.enabled)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${pressureAdj.enabled ? 'bg-[#37424A]' : 'bg-gray-200'}`}
+                    >
+                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${pressureAdj.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {pressureAdj.enabled && (
+                  <div className="bg-gray-100 p-3 rounded border border-gray-200">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Faktisk WHP (bar)</label>
+                        <input
+                          type="number"
+                          className="w-full border rounded px-2 py-1.5 text-sm"
+                          value={pressureAdj.adjustedWHP}
+                          onChange={(e) => handlePressureChange('adjustedWHP', parseFloat(e.target.value))}
+                        />
+                      </div>
+                      <div className="text-sm">
+                        <div className="text-gray-500 text-xs">Kalkulert Offset:</div>
+                        <div className={`font-bold ${weightOffsetKg !== 0 ? 'text-blue-600' : 'text-gray-700'}`}>
+                          {weightOffsetKg > 0 ? '+' : ''}{weightOffsetKg.toFixed(1)} kg
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-xs text-gray-500 italic">
+                      Rod Diameter: {rodDiameter} cm | Areal: {(rodArea * 10000).toFixed(2)} cm²
+                    </div>
+                    <div className="mt-2 text-xs bg-yellow-50 text-yellow-800 p-2 rounded border border-yellow-200 flex gap-2">
+                      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                      <span>
+                        <strong>NB:</strong> Endring av trykk vil flytte hele grafen. Sørg for at dette er kommunisert til operasjonssenteret.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Temperatur */}
+        <div className="border rounded">
+          <button
+            onClick={() => toggleSection('temp')}
+            className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Thermometer size={16} className="text-gray-600" />
+              <span className="font-bold text-[#37424A]">Temperatur</span>
+            </div>
+            {expanded.temp ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+          {expanded.temp && (
+            <div className="p-3 border-t bg-gray-50">
+              <div className="text-sm">
+                <span className="text-gray-500">Max Temperatur:</span> <span className="font-bold">{maxTemp.toFixed(1)} °C</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* BHA */}
+        <div className="border rounded">
+          <button
+            onClick={() => toggleSection('bha')}
+            className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Anchor size={16} className="text-gray-600" />
+              <span className="font-bold text-[#37424A]">BHA (Bottom Hole Assembly)</span>
+            </div>
+            {expanded.bha ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+          {expanded.bha && (
+            <div className="p-3 border-t bg-gray-50">
+              {run.bha?.tools?.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-100 text-xs text-gray-500 uppercase">
+                      <tr>
+                        <th className="p-2 text-left">Komponent</th>
+                        <th className="p-2 text-left">Lengde (m)</th>
+                        <th className="p-2 text-left">OD (cm)</th>
+                        <th className="p-2 text-left">Vekt (kg)</th>
+                        <th className="p-2 text-left">Type</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white">
+                      {run.bha.tools.map((tool, i) => (
+                        <tr key={i} className="border-b last:border-0">
+                          <td className="p-2 font-medium text-left">{tool.name || '-'}</td>
+                          <td className="p-2 text-left">{tool.length?.toFixed(2) || '-'}</td>
+                          <td className="p-2 text-left">{tool.od?.toFixed(2) || '-'}</td>
+                          <td className="p-2 text-left">{tool.weight?.toFixed(1) || '-'}</td>
+                          <td className="p-2 text-left">
+                            {tool.isTractor && <span className="bg-[#FFC82E] text-[#37424A] px-2 py-0.5 rounded text-xs font-bold">Tractor</span>}
+                            {tool.isCentralizer && <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs font-bold ml-1">Centralizer</span>}
+                            {!tool.isTractor && !tool.isCentralizer && '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-gray-400 text-sm">Ingen BHA komponenter definert.</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Tractor */}
+        <div className="border rounded">
+          <button
+            onClick={() => toggleSection('tractor')}
+            className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Truck size={16} className="text-gray-600" />
+              <span className="font-bold text-[#37424A]">Tractor</span>
+            </div>
+            {expanded.tractor ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+          {expanded.tractor && (
+            <div className="p-3 border-t bg-gray-50">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                <div><span className="text-gray-500">Skru på tractor på:</span> <span className="font-bold">{run.simulations?.tractorDepth || 0} m</span></div>
+                <div><span className="text-gray-500">Stopp tractor på:</span> <span className="font-bold">{run.simulations?.stopTractorDepth || 'N/A'} m</span></div>
+                <div><span className="text-gray-500">Tractor kraft:</span> <span className="font-bold">{tractorForce} kg</span></div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Tubing (Architecture) */}
+        <div className="border rounded">
+          <button
+            onClick={() => toggleSection('tubing')}
+            className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Layers size={16} className="text-gray-600" />
+              <span className="font-bold text-[#37424A]">Tubing (Arkitektur)</span>
+            </div>
+            {expanded.tubing ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+          {expanded.tubing && (
+            <div className="p-3 border-t bg-gray-50">
+              {well.architecture?.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-100 text-xs text-gray-500 uppercase">
+                      <tr>
+                        <th className="p-2 text-left">Fra (m)</th>
+                        <th className="p-2 text-left">Til (m)</th>
+                        <th className="p-2 text-left">ID (inches)</th>
+                        <th className="p-2 text-left">Frik. Rod RIH</th>
+                        <th className="p-2 text-left">Frik. Rod POOH</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white">
+                      {well.architecture.map((sec, i) => {
+                        const idInches = sec.units?.id === 'cm' ? (sec.id / 2.54).toFixed(3) : sec.id?.toFixed(3);
+                        return (
+                          <tr key={i} className="border-b last:border-0">
+                            <td className="p-2 text-left">{sec.start?.toFixed(0) || 0}</td>
+                            <td className="p-2 text-left">{sec.end?.toFixed(0) || 0}</td>
+                            <td className="p-2 font-bold text-left">{idInches}"</td>
+                            <td className="p-2 text-left">{sec.fricRodRIH?.toFixed(2) || '-'}</td>
+                            <td className="p-2 text-left">{sec.fricRodPOOH?.toFixed(2) || '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-gray-400 text-sm">Ingen arkitektur definert.</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Rod Friksjon */}
+        <div className="border rounded">
+          <button
+            onClick={() => toggleSection('rod')}
+            className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Activity size={16} className="text-gray-600" />
+              <span className="font-bold text-[#37424A]">Rod Friksjon</span>
+            </div>
+            {expanded.rod ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+          {expanded.rod && (
+            <div className="p-3 border-t bg-gray-50">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                <div><span className="text-gray-500">Væske:</span> <span className="font-bold">{run.rod?.fluidFric?.toFixed(3) || 0}</span></div>
+                <div><span className="text-gray-500">RIH:</span> <span className="font-bold">{run.rod?.rihFric?.toFixed(3) || 0}</span></div>
+                <div><span className="text-gray-500">POOH:</span> <span className="font-bold">{run.rod?.poohFric?.toFixed(3) || 0}</span></div>
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // --- MAIN APP COMPONENT ---
 export default function App() {
   const [view, setView] = useState('dashboard');
@@ -522,7 +1166,6 @@ export default function App() {
 
     const initAuth = async () => {
       try {
-        // Removed __initial_auth_token check for local dev, or keep if needed but likely anonymous for now
         await signInAnonymously(auth);
       } catch (err) {
         console.error("Autentisering feilet:", err);
@@ -568,14 +1211,39 @@ export default function App() {
     return () => unsubscribeData();
   }, [user, activeWell?.id]);
 
+  // Handle Routing for Field Portal - only on initial load
+  const hasCheckedFieldPortalRoute = useRef(false);
+  useEffect(() => {
+    // Strictly only run this once on mount
+    if (hasCheckedFieldPortalRoute.current) return;
+
+    // Wait for loading to finish
+    if (loading || wells.length === 0) return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'field') {
+      const wellId = params.get('wellId');
+      const runId = params.get('runId');
+      const well = wells.find(w => w.id === wellId);
+      if (well) {
+        const run = well.jobs?.find(r => r.id === runId);
+        if (run) {
+          setActiveWell(well);
+          setEditingRun(run);
+          setView('field-portal');
+        }
+      }
+    }
+    hasCheckedFieldPortalRoute.current = true;
+  }, [loading, wells.length]);
+
 
   const navigateTo = (newView, well = null) => {
     if (well) setActiveWell(well);
     setView(newView);
   };
 
-  // --- DATABASE OPERATIONS ---
-
+  // ... (rest of the functions: handleSaveWell, handleDeleteWell, etc. - NO CHANGES NEEDED HERE)
   const handleSaveWell = async (wellData) => {
     if (!user) return;
     try {
@@ -612,7 +1280,7 @@ export default function App() {
     setView('dashboard');
   };
 
-  const handleSaveRun = async (wellId, runData) => {
+  const handleSaveRun = async (wellId, runData, shouldClose = true) => {
     if (!user) return;
     const wellToUpdate = wells.find(w => w.id === wellId);
     if (!wellToUpdate) return;
@@ -628,8 +1296,12 @@ export default function App() {
     try {
       const wellRef = doc(db, 'artifacts', appId, 'users', user.uid, 'wells', wellId);
       await updateDoc(wellRef, { jobs: newJobs });
-      setEditingRun(null);
-      if (!editingRun) setView('viewWell');
+
+      // Only close/navigate if explicitly requested
+      if (shouldClose === true) {
+        setEditingRun(null);
+        setView('viewWell');
+      }
     } catch (e) {
       console.error("Error saving run:", e);
     }
@@ -670,6 +1342,21 @@ export default function App() {
       await updateDoc(wellRef, { jobs: newJobs });
     } catch (e) {
       console.error("Error copying run:", e);
+    }
+  };
+
+  const handleToggleFieldPortal = async (wellId, runId, enabled) => {
+    if (!user) return;
+    const wellRef = doc(db, 'artifacts', appId, 'users', user.uid, 'wells', wellId);
+    const well = wells.find(w => w.id === wellId);
+    if (!well) return;
+    const updatedJobs = (well.jobs || []).map(j =>
+      j.id === runId ? { ...j, fieldPortalEnabled: enabled } : j
+    );
+    try {
+      await updateDoc(wellRef, { jobs: updatedJobs });
+    } catch (e) {
+      console.error("Error toggling field portal:", e);
     }
   };
 
@@ -725,8 +1412,10 @@ export default function App() {
       <main className="container mx-auto px-4 py-8 h-[calc(100vh-64px)]">
         {view === 'dashboard' && <Dashboard onNewWell={() => { setEditingWell(null); navigateTo('create'); }} wells={wells} onViewWell={(w) => navigateTo('viewWell', w)} onDeleteWell={handleDeleteWell} onEditWell={handleEditWell} />}
         {view === 'create' && <CreateWellWizard onCancel={cancelEdit} onSave={handleSaveWell} initialData={editingWell} />}
-        {view === 'viewWell' && <WellView well={activeWell} onBack={() => navigateTo('dashboard')} onNewRun={() => { setEditingRun(null); navigateTo('runWorkflow', activeWell); }} onEditRun={handleEditRun} onCopyRun={(r) => handleCopyRun(activeWell.id, r)} onDeleteRun={(id) => handleDeleteRun(activeWell.id, id)} />}
+        {view === 'viewWell' && <WellView well={activeWell} onBack={() => navigateTo('dashboard')} onNewRun={() => { setEditingRun(null); navigateTo('runWorkflow', activeWell); }} onEditRun={handleEditRun} onCopyRun={(r) => handleCopyRun(activeWell.id, r)} onDeleteRun={(id) => handleDeleteRun(activeWell.id, id)} onViewPortalDashboard={(r) => { setEditingRun(r); navigateTo('portal-dashboard', activeWell); }} onTogglePortal={(runId, enabled) => handleToggleFieldPortal(activeWell.id, runId, enabled)} />}
         {view === 'runWorkflow' && <RunWorkflow well={activeWell} onCancel={() => { setEditingRun(null); navigateTo('viewWell', activeWell); }} onSave={handleSaveRun} initialRun={editingRun} />}
+        {view === 'field-portal' && <FieldPortal well={activeWell} run={editingRun} />}
+        {view === 'portal-dashboard' && <FieldPortalDashboard well={activeWell} run={editingRun} onBack={() => navigateTo('viewWell', activeWell)} onTogglePortal={(runId, enabled) => handleToggleFieldPortal(activeWell.id, runId, enabled)} />}
       </main>
     </div>
   );
@@ -738,8 +1427,14 @@ function RunWorkflow({ well, onCancel, onSave, initialRun }) {
   const [runData, setRunData] = useState(initialRun || {
     general: { goal: '', targetDepth: '' },
     pce: { type: '', force: 0, friction: 0 },
-    fluids: { scenario: 'Shut-in', whp: 0, list: [{ type: 'Gass', sg: 0.1, percent: 33 }, { type: 'Olje', sg: 0.85, percent: 33 }, { type: 'Vann', sg: 1.05, percent: 34 }] },
-    temps: [{ md: 0, tvd: 0, temp: 15 }, { md: Math.max(...well.survey.map(p => p.md), 0), tvd: 0, temp: 80 }],
+    fluids: {
+      scenario: 'Shut-in', whp: 0, list: [
+        { type: 'Gass', sg: 0.1, percent: 33 },
+        { type: 'Olje', sg: 0.85, percent: 33 },
+        { type: 'Vann', sg: 1.05, percent: 34 }
+      ]
+    },
+    temps: [],
     rod: { diameter: 1.2, weight: 0.225, youngs: 125.0, rihFric: 0.2, poohFric: 0.2, fluidFric: 0.04, units: {} },
     bha: { name: '', tools: [] },
     simulations: { fileStandard: null, fileTractor: null, filePooh: null, tractorDepth: 0 }
@@ -750,14 +1445,14 @@ function RunWorkflow({ well, onCancel, onSave, initialRun }) {
     setRunData(newData);
     // If we are editing an existing run, auto-save to global state
     if (initialRun) {
-      onSave(well.id, newData);
+      onSave(well.id, newData, false);
     }
   };
 
   const handleSimulationSave = (simData) => {
     const newData = { ...runData, simulations: simData };
     setRunData(newData);
-    if (initialRun) onSave(well.id, newData);
+    if (initialRun) onSave(well.id, newData, false);
   };
 
   return (
@@ -778,7 +1473,7 @@ function RunWorkflow({ well, onCancel, onSave, initialRun }) {
           <RunConfiguration
             well={well}
             initialRun={runData} // Pass current state so we don't lose progress when switching tabs
-            onSave={(wid, data) => { onSave(wid, data); }} // Main save button inside config
+            onSave={(wid, data, shouldClose) => { onSave(wid, data, shouldClose); }} // Main save button inside config
             onCancel={onCancel}
             embedded={true} // New prop to hide headers inside component if needed
           />
@@ -791,10 +1486,55 @@ function RunWorkflow({ well, onCancel, onSave, initialRun }) {
           />
         )}
         {activeTab === 'portal' && (
-          <div className="h-full flex flex-col items-center justify-center text-gray-400">
-            <Share2 size={64} className="mb-4 opacity-20" />
-            <h2 className="text-xl font-bold text-gray-600">Feltingeniør Portal</h2>
-            <p>Kommer snart. Her vil du kunne sende pakken direkte til feltet.</p>
+          <div className="p-8 flex flex-col items-center justify-center h-full text-center">
+            <div className="bg-blue-50 p-6 rounded-full mb-6">
+              <Share2 size={48} className="text-[#37424A]" />
+            </div>
+            <h2 className="text-2xl font-bold text-[#37424A] mb-2">Felt Portal</h2>
+            <p className="text-gray-500 max-w-md mb-8">
+              Generer en lenke til feltportalen for å dele operasjonsmål, parametere og simuleringsdata med feltpersonell.
+            </p>
+
+            {initialRun?.id ? (
+              <div className="w-full max-w-lg bg-gray-50 p-4 rounded border border-gray-200">
+                <label className="block text-left text-xs font-bold text-gray-500 uppercase mb-2">Delbar Lenke</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${window.location.origin}${window.location.pathname}?mode=field&wellId=${well.id}&runId=${initialRun.id}`}
+                    className="flex-grow border rounded px-3 py-2 text-sm text-gray-600 bg-white select-all"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?mode=field&wellId=${well.id}&runId=${initialRun.id}`);
+                      alert('Lenke kopiert til utklippstavlen!');
+                    }}
+                    className="bg-[#37424A] text-white px-4 py-2 rounded font-bold text-sm hover:bg-[#2c353b] flex items-center gap-2"
+                  >
+                    <Copy size={16} /> Kopier
+                  </button>
+                </div>
+                <div className="mt-4 text-left">
+                  <a
+                    href={`${window.location.origin}${window.location.pathname}?mode=field&wellId=${well.id}&runId=${initialRun.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#00A99D] text-sm font-bold hover:underline flex items-center gap-1"
+                  >
+                    Åpne i ny fane <ArrowRight size={14} />
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded flex items-center gap-3 max-w-md text-left">
+                <AlertTriangle size={24} />
+                <div>
+                  <div className="font-bold">Runnet er ikke lagret</div>
+                  <div className="text-sm">Du må lagre konfigurasjonen før du kan generere en lenke til feltportalen.</div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -805,19 +1545,22 @@ function RunWorkflow({ well, onCancel, onSave, initialRun }) {
 // --- NEW COMPONENT: SIMULATION BUILDER ---
 function SimulationBuilder({ runData, onUpdate, well }) {
   const [files, setFiles] = useState({
-    rih: runData.simulations?.fileStandard || null,
-    tractor: runData.simulations?.fileTractor || null,
-    pooh: runData.simulations?.filePooh || null
+    rih: runData?.simulations?.fileStandard || null,
+    tractor: runData?.simulations?.fileTractor || null,
+    pooh: runData?.simulations?.filePooh || null
   });
-  const [tractorDepth, setTractorDepth] = useState(runData.simulations?.tractorDepth || 0);
+  const [tractorDepth, setTractorDepth] = useState(runData?.simulations?.tractorDepth || 0);
+  const [stopTractorDepth, setStopTractorDepth] = useState(runData?.simulations?.stopTractorDepth || 0);
   const [chartData, setChartData] = useState([]);
+  const [isStitched, setIsStitched] = useState(false);
 
   // File Parsers logic
   const handleFileUpload = (key, file) => {
     if (!file) {
       const newFiles = { ...files, [key]: null };
       setFiles(newFiles);
-      onUpdate({ ...runData.simulations, fileStandard: newFiles.rih, fileTractor: newFiles.tractor, filePooh: newFiles.pooh });
+      setIsStitched(false); // Reset stitch when files change
+      onUpdate({ ...(runData?.simulations || {}), fileStandard: newFiles.rih, fileTractor: newFiles.tractor, filePooh: newFiles.pooh });
       return;
     }
     const reader = new FileReader();
@@ -825,51 +1568,176 @@ function SimulationBuilder({ runData, onUpdate, well }) {
       const parsed = parseSimulationCSV(e.target.result);
       const newFiles = { ...files, [key]: parsed };
       setFiles(newFiles);
+      setIsStitched(false); // Reset stitch when files change
       // Save huge data array to parent state might be heavy, but necessary for tab switching
-      onUpdate({ ...runData.simulations, fileStandard: newFiles.rih, fileTractor: newFiles.tractor, filePooh: newFiles.pooh, tractorDepth });
+      onUpdate({ ...(runData?.simulations || {}), fileStandard: newFiles.rih, fileTractor: newFiles.tractor, filePooh: newFiles.pooh, tractorDepth, stopTractorDepth });
     };
     reader.readAsText(file);
   };
 
-  // Data Merging Logic
+  // Stitching Logic - triggered by button click
+  const handleStitch = () => {
+    if (!files.rih || !files.tractor) {
+      alert('Du må laste opp både RIH (Tractor Off) og RIH (Tractor On) filer for å sy sammen.');
+      return;
+    }
+
+    const forceDepth = tractorDepth || Math.max(...files.rih.map(p => p.md));
+    const stopDepth = stopTractorDepth > forceDepth ? stopTractorDepth : Infinity;
+
+    // Determine POOH Source
+    let poohSource = 'rih'; // Default
+    if (files.pooh) poohSource = 'override';
+    else if (files.tractor) poohSource = 'tractor';
+
+    // Create merged data
+    let merged = [];
+
+    // Combine all unique MD points from all relevant files
+    const allMDs = [...new Set([
+      ...files.rih.map(p => p.md),
+      ...files.tractor.map(p => p.md),
+      ...(files.pooh ? files.pooh.map(p => p.md) : [])
+    ])].sort((a, b) => a - b);
+
+    let lastRihStandard1Value = null;
+    let lastRihStandard1Index = -1;
+    let lastRihTractorValue = null;
+    let lastRihTractorIndex = -1;
+
+    allMDs.forEach((md, index) => {
+      const tractorOffPoint = files.rih.find(p => Math.abs(p.md - md) < 0.5);
+      const tractorOnPoint = files.tractor.find(p => Math.abs(p.md - md) < 0.5);
+
+      let dataPoint = {
+        md: md,
+        rih_standard_1: null,
+        rih_standard_2: null,
+        rih_tractor: null,
+        pooh: null
+      };
+
+      // RIH Logic:
+      // 1. Before force depth: Tractor Off (Standard 1)
+      // 2. Between force depth and stop depth: Tractor On
+      // 3. After stop depth: Tractor Off (Standard 2)
+
+      if (md < forceDepth) {
+        // Phase 1: Tractor Off
+        if (tractorOffPoint) {
+          dataPoint.rih_standard_1 = tractorOffPoint.rih;
+          lastRihStandard1Value = tractorOffPoint.rih;
+          lastRihStandard1Index = index;
+        }
+      } else if (md >= forceDepth && md < stopDepth) {
+        // Phase 2: Tractor On
+        if (tractorOnPoint) {
+          dataPoint.rih_tractor = tractorOnPoint.rih;
+          lastRihTractorValue = tractorOnPoint.rih;
+          lastRihTractorIndex = index;
+        }
+      } else {
+        // Phase 3: Tractor Off (again)
+        if (tractorOffPoint) {
+          dataPoint.rih_standard_2 = tractorOffPoint.rih;
+        } else if (lastRihStandard1Value !== null) {
+          // Fallback: If RIH file stops (e.g. lock-up), extend the last known value
+          dataPoint.rih_standard_2 = lastRihStandard1Value;
+        }
+      }
+
+      // POOH Logic: Independent of RIH logic
+      if (poohSource === 'override') {
+        const p = files.pooh.find(p => Math.abs(p.md - md) < 0.5);
+        if (p) dataPoint.pooh = p.pooh;
+      } else if (poohSource === 'tractor') {
+        if (tractorOnPoint) dataPoint.pooh = tractorOnPoint.pooh;
+      } else {
+        if (tractorOffPoint) dataPoint.pooh = tractorOffPoint.pooh;
+      }
+
+      merged.push(dataPoint);
+    });
+
+    // CONNECT THE LINES 1: Standard 1 -> Tractor
+    if (lastRihStandard1Index !== -1 && lastRihStandard1Index < merged.length) {
+      // Only connect if we are transitioning TO tractor
+      if (merged[lastRihStandard1Index].md < stopDepth) {
+        if (merged[lastRihStandard1Index].rih_tractor === null) {
+          merged[lastRihStandard1Index].rih_tractor = lastRihStandard1Value;
+        }
+      }
+    }
+
+    // CONNECT THE LINES 2: Tractor -> Standard 2
+    if (lastRihTractorIndex !== -1 && lastRihTractorIndex < merged.length) {
+      // Only connect if we are transitioning FROM tractor
+      // Check if we actually have a Standard 2 segment following
+      const nextPoint = merged[lastRihTractorIndex + 1];
+      if (nextPoint && (nextPoint.rih_standard_2 !== null || merged[lastRihTractorIndex].rih_standard_2 !== null)) {
+        if (merged[lastRihTractorIndex].rih_standard_2 === null) {
+          merged[lastRihTractorIndex].rih_standard_2 = lastRihTractorValue;
+        }
+      }
+    }
+
+    setChartData(merged);
+    setIsStitched(true);
+    onUpdate({
+      ...(runData?.simulations || {}),
+      fileStandard: files.rih,
+      fileTractor: files.tractor,
+      filePooh: files.pooh,
+      tractorDepth,
+      stopTractorDepth,
+      chartData: merged
+    });
+  };
+
+  // Helper to generate ticks
+  const generateTicks = (min, max, step) => {
+    const ticks = [];
+    const start = Math.floor(min / step) * step;
+    const end = Math.ceil(max / step) * step;
+    for (let i = start; i <= end; i += step) {
+      ticks.push(i);
+    }
+    return ticks;
+  };
+
+  // Calculate domains and ticks for grid
+  const mdMax = chartData.length > 0 ? Math.max(...chartData.map(d => d.md)) : 8000;
+  const weightMax = chartData.length > 0 ? Math.max(...chartData.map(d => Math.max(d.rih_standard_1 || -Infinity, d.rih_standard_2 || -Infinity, d.rih_tractor || -Infinity, d.pooh || -Infinity))) : 3000;
+  const weightMin = chartData.length > 0 ? Math.min(...chartData.map(d => Math.min(d.rih_standard_1 || Infinity, d.rih_standard_2 || Infinity, d.rih_tractor || Infinity, d.pooh || Infinity))) : -200;
+
+  // Ensure reasonable bounds if data is empty or flat
+  const safeMdMax = isFinite(mdMax) ? mdMax : 8000;
+  const safeWeightMax = isFinite(weightMax) ? weightMax : 3000;
+  const safeWeightMin = Math.max(isFinite(weightMin) ? weightMin : -200, -200); // Minimum at -200kg
+
+  const mdTicks = generateTicks(0, safeMdMax, 500);
+  const weightTicks = generateTicks(safeWeightMin, safeWeightMax, 100);
+
+  // Auto-display without stitching when only RIH file is loaded
   useEffect(() => {
     if (!files.rih) {
       setChartData([]);
       return;
     }
-    // Logic 1: RIH Standard Only
-    // Use RIH from File 1. Use POOH from File 1.
+
+    // If stitched, don't auto-update
+    if (isStitched) return;
+
+    // Simple display of RIH file only
     let merged = files.rih.map(p => ({
       md: p.md,
-      rih_standard: p.rih, // Always plot standard RIH
+      rih_standard_1: p.rih, // Map to standard 1
+      rih_standard_2: null,
       rih_tractor: null,
-      pooh: p.pooh
+      pooh: files.pooh ? null : p.pooh // Use RIH POOH only if no override
     }));
 
-    // Logic 2 & 3: Tractor Handling
-    if (files.tractor && tractorDepth > 0) {
-      merged = merged.map(p => {
-        let newItem = { ...p };
-
-        // RIH Logic: Use Standard until tractorDepth, then Tractor data
-        if (p.md >= tractorDepth) {
-          // Find corresponding point in tractor file
-          const tractorPoint = files.tractor.find(tp => Math.abs(tp.md - p.md) < 0.5); // Simple proximity match
-          if (tractorPoint) {
-            newItem.rih_standard = null; // Stop showing standard line
-            newItem.rih_tractor = tractorPoint.rih; // Start showing tractor line
-            // If Logic 2 (Tractor file has POOH but no separate POOH file)
-            // And Logic 3 (Separate POOH file exists) handled below
-            if (!files.pooh) {
-              newItem.pooh = tractorPoint.pooh; // Override POOH with tractor file's POOH
-            }
-          }
-        }
-        return newItem;
-      });
-    }
-
-    // Logic 3: Dedicated POOH File
+    // Add POOH override if available
     if (files.pooh) {
       merged = merged.map(p => {
         const poohPoint = files.pooh.find(pp => Math.abs(pp.md - p.md) < 0.5);
@@ -878,8 +1746,7 @@ function SimulationBuilder({ runData, onUpdate, well }) {
     }
 
     setChartData(merged);
-
-  }, [files, tractorDepth]);
+  }, [files.rih, files.pooh, isStitched]);
 
   return (
     <div className="flex h-full">
@@ -921,39 +1788,147 @@ function SimulationBuilder({ runData, onUpdate, well }) {
       </div>
 
       {/* Main Content */}
-      <div className="flex-grow p-6 flex flex-col overflow-hidden">
-        <div className="grid grid-cols-3 gap-4 mb-4 shrink-0">
-          <FileUploader label="1. RIH (Standard)" color="border-gray-300" hasData={!!files.rih} onUpload={(f) => handleFileUpload('rih', f)} />
-          <div className="space-y-2">
-            <FileUploader label="2. RIH + Tractor (Opsjon)" color="border-[#FFC82E]" hasData={!!files.tractor} onUpload={(f) => handleFileUpload('tractor', f)} />
-            {files.tractor && (
-              <div className="flex items-center gap-2 bg-yellow-50 p-2 rounded border border-yellow-100">
-                <label className="text-xs font-bold text-[#37424A] whitespace-nowrap">Traktor Start (m):</label>
-                <input type="number" className="w-full text-xs p-1 border rounded" value={tractorDepth} onChange={(e) => { setTractorDepth(parseFloat(e.target.value)); onUpdate({ ...runData.simulations, tractorDepth: parseFloat(e.target.value) }); }} />
-              </div>
-            )}
+      <div className="flex-grow p-4 flex flex-col overflow-hidden">
+        <div className="flex gap-3 mb-2 shrink-0">
+          {/* Left: File Uploaders */}
+          <div className="flex gap-2 flex-shrink-0">
+            <FileUploader
+              label="1. RIH (Tractor Off)"
+              color="border-gray-300"
+              hasData={!!files.rih}
+              onUpload={(f) => handleFileUpload('rih', f)}
+              subLabel={files.rih ? `Max MD: ${Math.max(...files.rih.map(p => p.md)).toFixed(0)}m` : null}
+            />
+            <FileUploader
+              label="2. RIH (Tractor On)"
+              color="border-[#FFC82E]"
+              hasData={!!files.tractor}
+              onUpload={(f) => handleFileUpload('tractor', f)}
+              subLabel={files.tractor ? `Max MD: ${Math.max(...files.tractor.map(p => p.md)).toFixed(0)}m` : null}
+            />
+            <FileUploader
+              label="3. POOH (Override)"
+              color="border-[#00A99D]"
+              hasData={!!files.pooh}
+              onUpload={(f) => handleFileUpload('pooh', f)}
+            />
           </div>
-          <FileUploader label="3. POOH (Opsjon)" color="border-[#00A99D]" hasData={!!files.pooh} onUpload={(f) => handleFileUpload('pooh', f)} />
+
+          {/* Right: Controls */}
+          {files.tractor && (
+            <div className="flex flex-col gap-2 bg-yellow-50 p-2 rounded border border-yellow-100 flex-shrink-0 w-64">
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] font-bold text-[#37424A] whitespace-nowrap w-24">Start Tractor (m):</label>
+                <input
+                  type="number"
+                  className="w-full text-[10px] p-1 border rounded"
+                  value={tractorDepth}
+                  onChange={(e) => {
+                    setTractorDepth(parseFloat(e.target.value));
+                    setIsStitched(false);
+                    onUpdate({ ...(runData?.simulations || {}), tractorDepth: parseFloat(e.target.value) });
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] font-bold text-[#37424A] whitespace-nowrap w-24">Stop Tractor (m):</label>
+                <input
+                  type="number"
+                  placeholder="Optional"
+                  className="w-full text-[10px] p-1 border rounded"
+                  value={stopTractorDepth || ''}
+                  onChange={(e) => {
+                    setStopTractorDepth(parseFloat(e.target.value));
+                    setIsStitched(false);
+                    onUpdate({ ...(runData?.simulations || {}), stopTractorDepth: parseFloat(e.target.value) });
+                  }}
+                />
+              </div>
+              <button
+                onClick={handleStitch}
+                disabled={!files.rih || !files.tractor}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2
+                  ${files.rih && files.tractor ? 'bg-[#37424A] text-white hover:bg-slate-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                <Scissors size={14} /> Sy sammen filer
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex-grow bg-white border rounded-lg p-4 relative">
           {!files.rih && <div className="absolute inset-0 flex items-center justify-center text-gray-400 z-10 bg-white/50">Last opp RIH fil for å se grafen</div>}
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" domain={['auto', 'auto']} label={{ value: 'Tension (kg)', position: 'insideBottom', offset: -10 }} style={{ fontSize: '10px' }} />
-              <YAxis type="number" dataKey="md" reversed={true} label={{ value: 'Dybde (m)', angle: -90, position: 'insideLeft' }} style={{ fontSize: '10px' }} />
-              <Tooltip contentStyle={{ fontSize: '12px' }} labelFormatter={(label) => `MD: ${label} m`} />
-              <Legend verticalAlign="top" height={36} />
+            <ComposedChart data={chartData} margin={{ top: 40, right: 30, left: 60, bottom: 40 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} />
+              <XAxis
+                type="number"
+                dataKey="md"
+                domain={[0, 'auto']}
+                ticks={mdTicks}
+                label={{ value: 'Measured Depth (MD) [m]', position: 'insideBottom', offset: -15, style: { fill: '#4B5563', fontSize: '13px' } }}
+                style={{ fontSize: '11px' }}
+              />
+              <YAxis
+                type="number"
+                domain={['auto', 'auto']}
+                ticks={weightTicks}
+                interval={0}
+                label={{ value: 'Surface Weight [kg]', angle: -90, position: 'insideLeft', style: { fill: '#4B5563', fontSize: '13px' } }}
+                style={{ fontSize: '11px' }}
+              />
+              <Tooltip
+                contentStyle={{ fontSize: '12px', backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '4px' }}
+                labelFormatter={(label) => `MD: ${label} m`}
+              />
+              <Legend
+                verticalAlign="top"
+                height={36}
+                wrapperStyle={{ paddingBottom: '10px' }}
+              />
 
-              {/* RIH Standard Line */}
-              <Line name="RIH (Standard)" dataKey="rih_standard" stroke="#37424A" strokeWidth={2} dot={false} type="monotone" />
+              {/* RIH Standard Line 1 - Solid Blue (Before Tractor) */}
+              <Line
+                name="RIH"
+                dataKey="rih_standard_1"
+                stroke="#1E40AF"
+                strokeWidth={2}
+                dot={false}
+                connectNulls={true}
+              />
 
-              {/* RIH Tractor Line - connects from where standard left off */}
-              <Line name="RIH (Traktor)" dataKey="rih_tractor" stroke="#FFC82E" strokeWidth={3} dot={false} type="monotone" strokeDasharray="5 5" />
+              {/* RIH Standard Line 2 - Solid Blue (After Tractor) - No Legend */}
+              <Line
+                name="RIH"
+                dataKey="rih_standard_2"
+                stroke="#1E40AF"
+                strokeWidth={2}
+                dot={false}
+                connectNulls={true}
+                legendType="none"
+              />
 
-              {/* POOH Line */}
-              <Line name="POOH" dataKey="pooh" stroke="#00A99D" strokeWidth={2} dot={false} type="monotone" />
+              {/* RIH Tractor Line - Dashed Blue */}
+              <Line
+                name="RIH (Tractoring)"
+                dataKey="rih_tractor"
+                stroke="#1E40AF"
+                strokeWidth={2}
+                dot={false}
+                strokeDasharray="5 5"
+                connectNulls={true}
+              />
+
+              {/* POOH Line - Solid Green */}
+              <Line
+                name="POOH"
+                dataKey="pooh"
+                stroke="#10B981"
+                strokeWidth={2}
+                dot={false}
+                connectNulls={true}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -962,28 +1937,87 @@ function SimulationBuilder({ runData, onUpdate, well }) {
   );
 }
 
-function FileUploader({ label, color, hasData, onUpload }) {
+// --- COMPONENT: FILE UPLOADER (SIMULATION) ---
+const FileUploader = ({ label, color, hasData, onUpload, subLabel }) => {
+  const fileInputRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleClick = () => {
+    fileInputRef.current.click();
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      onUpload(file);
+    }
+  };
+
+  const handleRemove = (e) => {
+    e.stopPropagation();
+    onUpload(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file && (file.name.endsWith('.csv') || file.name.endsWith('.txt'))) {
+      onUpload(file);
+    }
+  };
+
   return (
-    <div className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${hasData ? 'bg-gray-50 border-solid ' + color : 'hover:bg-gray-50 ' + color}`}>
-      <div className="text-xs font-bold text-gray-500 uppercase mb-2">{label}</div>
+    <div
+      onClick={handleClick}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`relative border-2 border-dashed rounded-lg p-2 flex flex-col items-center justify-center cursor-pointer transition-colors h-24
+        ${hasData ? 'bg-white border-solid' : isDragging ? 'bg-blue-50 border-blue-400' : 'bg-slate-50 hover:bg-slate-100'}
+        ${color}
+      `}
+    >
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        className="hidden"
+        accept=".csv,.txt"
+      />
+
+      <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 text-center">{label}</div>
+
       {hasData ? (
         <div className="flex flex-col items-center">
-          <Check size={24} className="text-green-500 mb-1" />
-          <span className="text-xs font-bold text-gray-700">Fil lastet opp</span>
-          <button onClick={() => onUpload(null)} className="text-[10px] text-red-500 underline mt-1">Fjern fil</button>
+          <Check size={20} className="text-green-500 mb-1" />
+          <div className="text-xs font-bold text-[#37424A]">Fil lastet opp</div>
+          {subLabel && <div className="text-[10px] text-gray-400 mt-0.5">{subLabel}</div>}
+          <button onClick={handleRemove} className="text-[10px] text-red-500 hover:underline mt-1 z-10">Fjern fil</button>
         </div>
       ) : (
-        <div className="relative">
-          <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".csv,.txt" onChange={(e) => onUpload(e.target.files[0])} />
-          <div className="flex flex-col items-center pointer-events-none">
-            <Upload size={20} className="text-gray-400 mb-1" />
-            <span className="text-[10px] text-gray-400">Klikk for å laste opp</span>
-          </div>
+        <div className="flex flex-col items-center text-gray-400">
+          <Upload size={16} className="mb-1" />
+          <div className="text-[10px]">{isDragging ? 'Slipp filen her' : 'Klikk eller dra fil'}</div>
         </div>
       )}
     </div>
   );
-}
+};
 
 // --- FEATURE: RUN CONFIGURATION (MODIFIED TO BE EMBEDDABLE) ---
 function RunConfiguration({ well, onCancel, onSave, initialRun, embedded }) {
@@ -1003,20 +2037,32 @@ function RunConfiguration({ well, onCancel, onSave, initialRun, embedded }) {
   const getTVD = (md) => interpolate(md, surveyMD, surveyTVD);
   const getMD = (tvd) => interpolate(tvd, surveyTVD, surveyMD);
 
+  // Only check confirmed steps or saved completed flags
   const isComplete = {
-    1: confirmedSteps[1] || (runData.general?.goal && runData.general?.targetDepth), // Basic check for edit mode
-    2: confirmedSteps[2] || runData.pce?.type,
-    3: confirmedSteps[3] || runData.fluids?.whp,
-    4: confirmedSteps[4] || runData.temps?.length > 0,
-    5: confirmedSteps[5] || true, // Defaults exist
-    6: confirmedSteps[6] || true
+    1: confirmedSteps[1] || runData.completed?.[1] || false,
+    2: confirmedSteps[2] || runData.completed?.[2] || false,
+    3: confirmedSteps[3] || runData.completed?.[3] || false,
+    4: confirmedSteps[4] || runData.completed?.[4] || false,
+    5: confirmedSteps[5] || runData.completed?.[5] || false,
+    6: confirmedSteps[6] || runData.completed?.[6] || false
   };
 
-  const handleStepComplete = (stepId) => {
+  const handleStepComplete = (stepId, goToNext = false) => {
     setConfirmedSteps(prev => ({ ...prev, [stepId]: true }));
-    setActiveStep(null);
-    // Auto save on step completion
-    onSave(well.id, runData);
+    // Mark step as completed in run data
+    const updatedData = {
+      ...runData,
+      completed: { ...(runData.completed || {}), [stepId]: true }
+    };
+    setRunData(updatedData);
+    // Auto save on step completion (keep wizard open)
+    onSave(well.id, updatedData, false);
+
+    if (goToNext && stepId < 6) {
+      setActiveStep(stepId + 1);
+    } else {
+      setActiveStep(null);
+    }
   };
 
   const steps = [
@@ -1030,26 +2076,26 @@ function RunConfiguration({ well, onCancel, onSave, initialRun, embedded }) {
 
   const renderStep = () => {
     switch (activeStep) {
-      case 1: return <StepGeneral data={runData.general} setData={(d) => setRunData({ ...runData, general: d })} maxDepth={maxDepth} onComplete={() => handleStepComplete(1)} />;
-      case 2: return <StepPCE data={runData.pce} setData={(d) => setRunData({ ...runData, pce: d })} onComplete={() => handleStepComplete(2)} />;
-      case 3: return <StepFluids data={runData.fluids} setData={(d) => setRunData({ ...runData, fluids: d })} maxTVD={maxTVD} maxMD={maxDepth} getMD={getMD} getTVD={getTVD} onComplete={() => handleStepComplete(3)} />;
-      case 4: return <StepTemperature data={runData.temps} setData={(d) => setRunData({ ...runData, temps: d })} getMD={getMD} getTVD={getTVD} maxDepth={maxDepth} onComplete={() => handleStepComplete(4)} />;
-      case 5: return <StepRod data={runData.rod} setData={(d) => setRunData({ ...runData, rod: d })} onComplete={() => handleStepComplete(5)} />;
-      case 6: return <StepBHA data={runData.bha} setData={(d) => setRunData({ ...runData, bha: d })} onComplete={() => handleStepComplete(6)} />;
+      case 1: return <StepGeneral data={runData.general} setData={(d) => setRunData({ ...runData, general: d })} maxDepth={maxDepth} onComplete={(next) => handleStepComplete(1, next)} />;
+      case 2: return <StepPCE data={runData.pce} setData={(d) => setRunData({ ...runData, pce: d })} onComplete={(next) => handleStepComplete(2, next)} />;
+      case 3: return <StepFluids data={runData.fluids} setData={(d) => setRunData({ ...runData, fluids: d })} maxTVD={maxTVD} maxMD={maxDepth} getMD={getMD} getTVD={getTVD} onComplete={(next) => handleStepComplete(3, next)} />;
+      case 4: return <StepTemperature data={runData.temps} setData={(d) => setRunData({ ...runData, temps: d })} getMD={getMD} getTVD={getTVD} maxDepth={maxDepth} maxTVD={maxTVD} onComplete={(next) => handleStepComplete(4, next)} />;
+      case 5: return <StepRod data={runData.rod} setData={(d) => setRunData({ ...runData, rod: d })} onComplete={(next) => handleStepComplete(5, next)} />;
+      case 6: return <StepBHA data={runData.bha} setData={(d) => setRunData({ ...runData, bha: d })} onComplete={(next) => handleStepComplete(6, next)} />;
       default: return null;
     }
   };
 
   if (activeStep === null) {
     return (
-      <div className="max-w-4xl mx-auto py-8 h-full flex flex-col">
+      <div className="max-w-4xl mx-auto py-8 flex flex-col">
         {!embedded && (
           <div className="flex items-center gap-4 mb-8 shrink-0">
             <button onClick={onCancel} className="p-2 hover:bg-white rounded-full text-gray-500"><ArrowRight className="rotate-180" /></button>
             <div><h2 className="text-2xl font-bold text-[#37424A]">{initialRun ? 'Rediger Run' : 'Nytt Run Konfigurasjon'}</h2><p className="text-sm text-gray-500">Fyll ut alle stegene nedenfor for å klargjøre simuleringen.</p></div>
           </div>
         )}
-        <div className="grid grid-cols-1 gap-4 overflow-y-auto flex-grow pr-2">
+        <div className="grid grid-cols-1 gap-4 flex-grow pr-2">
           {steps.map(step => (
             <div key={step.id} onClick={() => setActiveStep(step.id)} className={`bg-white p-6 rounded-lg shadow-sm border flex items-center justify-between cursor-pointer transition-colors group ${isComplete[step.id] ? 'border-green-200 bg-green-50' : 'border-gray-200 hover:border-[#FFC82E]'}`}>
               <div className="flex items-center gap-4">
@@ -1060,18 +2106,18 @@ function RunConfiguration({ well, onCancel, onSave, initialRun, embedded }) {
             </div>
           ))}
         </div>
-        {!embedded && <div className="mt-8 flex justify-end shrink-0"><button disabled={Object.values(isComplete).some(x => !x)} onClick={() => onSave(well.id, runData)} className={`px-8 py-3 rounded font-bold text-white ${Object.values(isComplete).some(x => !x) ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#37424A] hover:bg-slate-700'}`}>{initialRun ? 'Lagre Endringer' : 'Opprett Run'}</button></div>}
+        {!embedded && <div className="mt-8 flex justify-end shrink-0"><button disabled={!isComplete[1]} onClick={() => onSave(well.id, runData, true)} className={`px-8 py-3 rounded font-bold text-white ${!isComplete[1] ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#37424A] hover:bg-slate-700'}`}>{initialRun ? 'Lagre Endringer' : 'Opprett Run'}</button></div>}
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-white overflow-hidden">
+    <div className="flex flex-col bg-white">
       <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-slate-50">
         <button onClick={() => setActiveStep(null)} className="text-sm font-bold text-gray-500 hover:text-[#37424A] flex items-center gap-2"><ArrowRight className="rotate-180" size={16} /> Tilbake til oversikt</button>
         <h3 className="font-bold text-[#37424A]">{steps.find(s => s.id === activeStep)?.title}</h3><div className="w-20"></div>
       </div>
-      <div className="flex-grow overflow-hidden p-6">{renderStep()}</div>
+      <div className="flex-grow p-6">{renderStep()}</div>
     </div>
   );
 }
@@ -1079,12 +2125,16 @@ function RunConfiguration({ well, onCancel, onSave, initialRun, embedded }) {
 function StepGeneral({ data, setData, maxDepth, onComplete }) {
   const isDepthInvalid = parseFloat(data.targetDepth) > maxDepth;
   return (
-    <div className="max-w-lg mx-auto space-y-6 pt-10 h-full flex flex-col">
+    <div className="max-w-lg mx-auto space-y-6 pt-10 flex flex-col">
       <div className="flex-grow space-y-6">
-        <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Mål for operasjonen</label><textarea className="w-full border border-gray-300 p-3 rounded h-32 text-sm focus:border-[#FFC82E] outline-none" placeholder="Beskriv formålet..." value={data.goal} onChange={e => setData({ ...data, goal: e.target.value })} /></div>
+        <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Mål for operasjonen</label><input type="text" className="w-full border border-gray-300 p-3 rounded text-sm focus:border-[#FFC82E] outline-none" placeholder="Kort beskrivelse av målet..." value={data.goal} onChange={e => setData({ ...data, goal: e.target.value })} /></div>
+        <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Beskrivelse (Valgfritt)</label><textarea className="w-full border border-gray-300 p-3 rounded text-sm focus:border-[#FFC82E] outline-none" rows={5} placeholder="Mer detaljert beskrivelse..." value={data.description || ''} onChange={e => setData({ ...data, description: e.target.value })} /></div>
         <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Måldybde (MD)</label><div className="flex items-center gap-2"><input type="number" className={`w-full border p-3 rounded text-sm focus:border-[#FFC82E] outline-none ${isDepthInvalid ? 'border-red-500 bg-red-50' : 'border-gray-300'}`} value={data.targetDepth} onChange={e => setData({ ...data, targetDepth: e.target.value })} /><span className="text-sm text-gray-500">meter</span></div>{isDepthInvalid && <p className="text-xs text-red-500 mt-1 font-bold">Feil: Dybde overstiger brønnens totale dybde ({maxDepth.toFixed(0)} m).</p>}</div>
       </div>
-      <button onClick={onComplete} disabled={!data.targetDepth || !data.goal || isDepthInvalid} className={`w-full py-3 rounded font-bold mt-auto ${data.targetDepth && data.goal && !isDepthInvalid ? 'bg-[#37424A] text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>Lagre & Gå til Oversikt</button>
+      <div className="flex gap-4 mt-auto">
+        <button onClick={() => onComplete(false)} disabled={!data.targetDepth || !data.goal || isDepthInvalid} className={`flex-1 py-3 rounded font-bold bg-gray-200 text-gray-600 ${(!data.targetDepth || !data.goal || isDepthInvalid) && 'opacity-50 cursor-not-allowed'}`}>Lagre & Oversikt</button>
+        <button onClick={() => onComplete(true)} disabled={!data.targetDepth || !data.goal || isDepthInvalid} className={`flex-1 py-3 rounded font-bold text-white ${data.targetDepth && data.goal && !isDepthInvalid ? 'bg-[#37424A] hover:bg-slate-700' : 'bg-gray-400 cursor-not-allowed'}`}>Neste</button>
+      </div>
     </div>
   );
 }
@@ -1093,12 +2143,15 @@ function StepPCE({ data, setData, onComplete }) {
   const [confirmed, setConfirmed] = useState(false);
   const handleSelect = (type, force, friction) => { setData({ type, force, friction }); setConfirmed(false); };
   return (
-    <div className="max-w-lg mx-auto space-y-6 pt-10 h-full flex flex-col">
+    <div className="max-w-lg mx-auto space-y-6 pt-10 flex flex-col">
       <div className="flex-grow space-y-6">
         <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Type Utstyr</label><div className="flex gap-4"><button onClick={() => handleSelect('SDS', 100, 0.5)} className={`flex-1 py-3 rounded border font-bold text-sm transition-all ${data.type === 'SDS' ? 'bg-[#37424A] text-white border-[#37424A]' : 'bg-white text-gray-600 border-gray-200'}`}>SDS</button><button onClick={() => handleSelect('GIH', 100, 0.2)} className={`flex-1 py-3 rounded border font-bold text-sm transition-all ${data.type === 'GIH' ? 'bg-[#37424A] text-white border-[#37424A]' : 'bg-white text-gray-600 border-gray-200'}`}>GIH</button></div></div>
         {data.type && (<div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-4 duration-300"><div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Kontaktkraft (kg)</label><input type="number" className="w-full border p-2 rounded" value={data.force} onChange={e => setData({ ...data, force: parseFloat(e.target.value) })} /></div><div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Friksjonsfaktor</label><input type="number" step="0.1" className="w-full border p-2 rounded" value={data.friction} onChange={e => setData({ ...data, friction: parseFloat(e.target.value) })} /></div></div>)}
       </div>
-      <button onClick={() => { setConfirmed(true); onComplete() }} disabled={!data.type} className={`w-full py-3 rounded font-bold mt-auto ${data.type ? 'bg-[#37424A] text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>Lagre & Gå til Oversikt</button>
+      <div className="flex gap-4 mt-auto">
+        <button onClick={() => { setConfirmed(true); onComplete(false) }} disabled={!data.type} className={`flex-1 py-3 rounded font-bold bg-gray-200 text-gray-600 ${!data.type && 'opacity-50 cursor-not-allowed'}`}>Lagre & Oversikt</button>
+        <button onClick={() => { setConfirmed(true); onComplete(true) }} disabled={!data.type} className={`flex-1 py-3 rounded font-bold text-white ${data.type ? 'bg-[#37424A] hover:bg-slate-700' : 'bg-gray-400 cursor-not-allowed'}`}>Neste</button>
+      </div>
     </div>
   );
 }
@@ -1162,22 +2215,23 @@ function StepFluids({ data, setData, maxTVD, maxMD, getTVD, onComplete }) {
   const isInvalid = Math.abs(totalPercent - 100) > 0.5;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
-      <div className="flex flex-col h-full overflow-y-auto pr-2">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="flex flex-col pr-2">
         <h4 className="font-bold text-[#37424A] mb-4">Konfigurasjon</h4>
         <div className="mb-6"><label className="block text-xs font-bold text-gray-500 uppercase mb-1">WHP (Brønnhodetrykk) [bar]</label><input type="number" className="w-full border p-2 rounded font-bold" value={data.whp} onChange={e => setData({ ...data, whp: e.target.value })} /></div>
         <div className="space-y-4 mb-6">
           {data.list.map((f, i) => (
             <div key={i} className="bg-gray-50 p-3 rounded border border-gray-200">
               <div className="flex justify-between mb-2 font-bold text-sm"><span>{f.type}</span><span className="text-gray-400">{((f.percent || 0) / 100 * maxTVD).toFixed(0)} m (TVD høyde)</span></div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-4 gap-3">
                 <div><label className="text-[10px] text-gray-500 uppercase block">Tetthet (SG)</label><input type="number" className="w-full border rounded p-1 text-sm" value={f.sg} onChange={e => { const l = [...data.list]; l[i].sg = parseFloat(e.target.value); setData({ ...data, list: l }); }} /></div>
-                <div><label className="text-[10px] text-gray-500 uppercase block">Volumandel (%)</label><input type="number" className="w-full border rounded p-1 text-sm" value={f.percent} onChange={e => updatePercent(i, e.target.value)} /></div>
-                <div><label className="text-[10px] text-gray-500 uppercase block">TVD Høyde (m)</label><input type="number" className="w-full border rounded p-1 text-sm bg-blue-50" value={(((f.percent || 0) / 100) * maxTVD).toFixed(1)} onChange={e => updateTVDInput(i, e.target.value)} /></div>
+                <div><label className="text-[10px] text-gray-500 uppercase block">Vertikal Høyde (%)</label><input type="number" className="w-full border rounded p-1 text-sm" value={f.percent} onChange={e => updatePercent(i, e.target.value)} /></div>
+                <div><label className="text-[10px] text-gray-500 uppercase block">TVD-Dybde (M)</label><input type="number" className="w-full border rounded p-1 text-sm bg-blue-50" value={(((f.percent || 0) / 100) * maxTVD).toFixed(1)} onChange={e => updateTVDInput(i, e.target.value)} /></div>
+                <div><label className="text-[10px] text-gray-500 uppercase block">MD-Dybde (M)</label><input type="number" className="w-full border rounded p-1 text-sm bg-blue-50" value={(((f.percent || 0) / 100) * maxMD).toFixed(1)} readOnly /></div>
               </div>
             </div>
           ))}
-          {isInvalid && (<div className="flex items-center gap-2 text-red-600 bg-red-50 p-3 rounded text-sm border border-red-200"><AlertTriangle size={16} /> Totalt volum er {totalPercent.toFixed(1)}% (Må være 100%)</div>)}
+          {isInvalid && (<div className="flex items-center gap-2 text-red-600 bg-red-50 p-3 rounded text-sm border border-red-200"><AlertTriangle size={16} /> Totalt høyde er {totalPercent.toFixed(1)}% (Mangler {(100 - totalPercent).toFixed(1)}%)</div>)}
         </div>
         <div className="border border-gray-200 rounded-lg overflow-hidden mb-4">
           <button onClick={() => setCalcOpen(!calcOpen)} className="w-full flex justify-between items-center p-3 bg-gray-100 hover:bg-gray-200 text-xs font-bold text-[#37424A]"><span className="flex items-center gap-2"><Calculator size={14} /> Interface Kalkulator (Væskespeil)</span>{calcOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
@@ -1191,9 +2245,12 @@ function StepFluids({ data, setData, maxTVD, maxMD, getTVD, onComplete }) {
             </div>
           )}
         </div>
-        <button onClick={onComplete} disabled={isInvalid} className={`w-full py-3 rounded font-bold mt-auto ${!isInvalid ? 'bg-[#37424A] text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>Lagre & Gå til Oversikt</button>
+        <div className="flex gap-4 mt-auto">
+          <button onClick={() => onComplete(false)} disabled={isInvalid} className={`flex-1 py-3 rounded font-bold bg-gray-200 text-gray-600 ${isInvalid && 'opacity-50 cursor-not-allowed'}`}>Lagre & Oversikt</button>
+          <button onClick={() => onComplete(true)} disabled={isInvalid} className={`flex-1 py-3 rounded font-bold text-white ${!isInvalid ? 'bg-[#37424A] hover:bg-slate-700' : 'bg-gray-400 cursor-not-allowed'}`}>Neste</button>
+        </div>
       </div>
-      <div className="bg-white border rounded-lg p-4 flex flex-col">
+      <div className="bg-white border rounded-lg p-4 flex flex-col h-[500px]">
         <h4 className="font-bold text-[#37424A] text-xs mb-2">Hydrostatisk Trykkprofil</h4>
         <div className="flex-grow"><ResponsiveContainer width="100%" height="100%"><LineChart data={pressureData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" /><XAxis type="number" dataKey="md" label={{ value: 'MD (m)', position: 'insideBottom', offset: -5 }} style={{ fontSize: '10px' }} /><YAxis type="number" dataKey="pressure" label={{ value: 'Trykk (bar)', angle: -90, position: 'insideLeft' }} style={{ fontSize: '10px' }} /><Tooltip contentStyle={{ fontSize: '12px' }} labelFormatter={(label) => `MD: ${label} m`} /><Line dataKey="pressure" stroke="#00A99D" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
       </div>
@@ -1202,28 +2259,118 @@ function StepFluids({ data, setData, maxTVD, maxMD, getTVD, onComplete }) {
 }
 
 // --- STEP 4: TEMPERATURE (UPDATED WITH PLOT) ---
-function StepTemperature({ data, setData, getTVD, getMD, maxDepth, onComplete }) {
+function StepTemperature({ data, setData, getTVD, getMD, maxDepth, maxTVD, onComplete }) {
   const [units, setUnits] = useState({ depth: 'm', temp: 'C' });
-  const updateRow = (i, field, val) => { const newData = [...data]; const numVal = parseFloat(val); newData[i][field] = numVal; if (field === 'md') newData[i].tvd = parseFloat(getTVD(numVal).toFixed(1)); else if (field === 'tvd') newData[i].md = parseFloat(getMD(numVal).toFixed(1)); newData.sort((a, b) => a.md - b.md); setData(newData); };
-  const addRow = () => setData([...data, { md: 0, tvd: 0, temp: 0 }].sort((a, b) => a.md - b.md));
-  const removeRow = (i) => setData(data.filter((_, idx) => idx !== i));
-  const hasErrors = data.some(row => row.md > maxDepth);
+
+  // Ensure data is an array
+  const tempData = Array.isArray(data) ? data : [];
+
+  const updateRow = (i, field, val) => {
+    // Create a new array and a new object for the row to avoid direct mutation
+    const newData = [...tempData];
+    newData[i] = { ...newData[i] };
+
+    // Store the raw value (string) to allow typing "1." or empty string
+    newData[i][field] = val;
+
+    // Handle comma as decimal separator for parsing
+    const normalizedVal = val.replace(',', '.');
+    const numVal = parseFloat(normalizedVal);
+
+    // Auto-calculate TVD when MD changes (only if valid number)
+    if (field === 'md' && !isNaN(numVal)) {
+      newData[i].tvd = parseFloat(getTVD(numVal).toFixed(1));
+    }
+    // Auto-calculate MD when TVD changes (if needed)
+    else if (field === 'tvd' && !isNaN(numVal)) {
+      newData[i].md = parseFloat(getMD(numVal).toFixed(1));
+    }
+
+    // Don't sort here! It messes up focus while typing.
+    setData(newData);
+  };
+
+  const addRow = () => setData([...tempData, { md: '', tvd: 0, temp: '' }]);
+  const removeRow = (i) => setData(tempData.filter((_, idx) => idx !== i));
+  const hasErrors = tempData.some(row => (parseFloat(String(row.md).replace(',', '.')) || 0) > maxDepth);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
-      <div className="flex flex-col h-full">
-        <h4 className="font-bold text-[#37424A] mb-4">Profil Data</h4>
-        <div className="bg-white border rounded-lg overflow-hidden flex-grow mb-4">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="flex flex-col">
+        <div className="flex justify-between items-center mb-4">
+          <h4 className="font-bold text-[#37424A]">Profil Data</h4>
+          <div className="text-xs text-gray-500">
+            Max TVD: <span className="font-bold text-[#37424A]">{maxTVD.toFixed(1)} m</span>
+          </div>
+        </div>
+        <div className="bg-white border rounded-lg overflow-hidden mb-4">
           <div className="flex bg-gray-50 text-xs font-bold text-gray-500 border-b p-3"><div className="flex-1">MD ({units.depth})</div><div className="flex-1">TVD ({units.depth})</div><div className="flex-1">Temp ({units.temp})</div><div className="w-8"></div></div>
-          {data.map((row, i) => (<div key={i} className="flex border-b last:border-0 p-2 items-center gap-2"><input type="number" className={`flex-1 border rounded px-2 py-1 text-sm ${row.md > maxDepth ? 'border-red-500 bg-red-50' : ''}`} value={row.md} onChange={e => updateRow(i, 'md', e.target.value)} /><input type="number" className="flex-1 border rounded px-2 py-1 text-sm bg-gray-50" value={row.tvd} readOnly /><input type="number" className="flex-1 border rounded px-2 py-1 text-sm" value={row.temp} onChange={e => updateRow(i, 'temp', e.target.value)} /><button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-500"><Trash2 size={14} /></button></div>))}
+          {tempData.map((row, i) => (
+            <div key={i} className="flex border-b last:border-0 p-2 items-center gap-2">
+              <input
+                type="text"
+                inputMode="decimal"
+                className={`flex-1 border rounded px-2 py-1 text-sm ${(parseFloat(String(row.md).replace(',', '.')) || 0) > maxDepth ? 'border-red-500 bg-red-50' : ''}`}
+                value={row.md}
+                onChange={e => updateRow(i, 'md', e.target.value)}
+                placeholder="0"
+              />
+              <input
+                type="number"
+                className="flex-1 border rounded px-2 py-1 text-sm bg-gray-50"
+                value={row.tvd}
+                readOnly
+                title="TVD beregnes automatisk fra MD"
+              />
+              <input
+                type="text"
+                inputMode="decimal"
+                className="flex-1 border rounded px-2 py-1 text-sm"
+                value={row.temp}
+                onChange={e => updateRow(i, 'temp', e.target.value)}
+                placeholder="0"
+              />
+              <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+            </div>
+          ))}
         </div>
         {hasErrors && <div className="text-xs text-red-500 font-bold mb-2 flex items-center gap-2"><AlertTriangle size={14} /> Dybde kan ikke være større enn brønnens maks dybde ({maxDepth.toFixed(0)}m).</div>}
-        <button onClick={addRow} className="text-[#00A99D] font-bold text-sm flex items-center gap-1 hover:underline mt-2 mb-4"><Plus size={16} /> Legg til punkt</button>
-        <button onClick={onComplete} disabled={hasErrors} className={`w-full py-3 rounded font-bold mt-auto ${hasErrors ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-[#37424A] text-white'}`}>Lagre & Gå til Oversikt</button>
+        <div className="flex gap-2 mt-2 mb-4">
+          <button onClick={addRow} className="text-[#00A99D] font-bold text-sm flex items-center gap-1 hover:underline"><Plus size={16} /> Legg til punkt</button>
+          {tempData.length > 0 && (
+            <button onClick={() => setData([])} className="text-red-500 font-bold text-sm flex items-center gap-1 hover:underline ml-auto"><Trash2 size={16} /> Tøm liste</button>
+          )}
+        </div>
+        <div className="flex gap-4">
+          <button onClick={() => {
+            // Sort data and convert to numbers before saving
+            const sortedData = [...tempData]
+              .map(row => ({
+                md: parseFloat(String(row.md).replace(',', '.')) || 0,
+                tvd: parseFloat(String(row.tvd).replace(',', '.')) || 0,
+                temp: parseFloat(String(row.temp).replace(',', '.')) || 0
+              }))
+              .sort((a, b) => a.md - b.md);
+            setData(sortedData);
+            onComplete(false);
+          }} disabled={hasErrors} className={`flex-1 py-3 rounded font-bold bg-gray-200 text-gray-600 ${hasErrors && 'opacity-50 cursor-not-allowed'}`}>Lagre & Oversikt</button>
+          <button onClick={() => {
+            // Sort data and convert to numbers before saving
+            const sortedData = [...tempData]
+              .map(row => ({
+                md: parseFloat(String(row.md).replace(',', '.')) || 0,
+                tvd: parseFloat(String(row.tvd).replace(',', '.')) || 0,
+                temp: parseFloat(String(row.temp).replace(',', '.')) || 0
+              }))
+              .sort((a, b) => a.md - b.md);
+            setData(sortedData);
+            onComplete(true);
+          }} disabled={hasErrors} className={`flex-1 py-3 rounded font-bold text-white ${!hasErrors ? 'bg-[#37424A] hover:bg-slate-700' : 'bg-gray-400 cursor-not-allowed'}`}>Neste</button>
+        </div>
       </div>
-      <div className="bg-white border rounded-lg p-4 flex flex-col">
+      <div className="bg-white border rounded-lg p-4 flex flex-col h-[500px]">
         <h4 className="font-bold text-[#37424A] text-xs mb-2">Temperatur vs MD</h4>
-        <div className="flex-grow"><ResponsiveContainer width="100%" height="100%"><LineChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" /><XAxis type="number" dataKey="md" domain={[0, maxDepth]} label={{ value: 'MD (m)', position: 'insideBottom', offset: -5 }} style={{ fontSize: '10px' }} /><YAxis type="number" dataKey="temp" label={{ value: 'Temp (C)', angle: -90, position: 'insideLeft' }} style={{ fontSize: '10px' }} /><Tooltip contentStyle={{ fontSize: '12px' }} /><Line dataKey="temp" stroke="#FFC82E" strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></div>
+        <div className="flex-grow"><ResponsiveContainer width="100%" height="100%"><LineChart data={tempData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}><CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" /><XAxis type="number" dataKey="md" domain={[0, maxDepth]} label={{ value: 'MD (m)', position: 'insideBottom', offset: -5 }} style={{ fontSize: '10px' }} /><YAxis type="number" dataKey="temp" label={{ value: 'Temp (C)', angle: -90, position: 'insideLeft' }} style={{ fontSize: '10px' }} /><Tooltip contentStyle={{ fontSize: '12px' }} /><Line dataKey="temp" stroke="#FFC82E" strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></div>
       </div>
     </div>
   );
@@ -1244,8 +2391,8 @@ function StepRod({ data, setData, onComplete }) {
     );
   };
   return (
-    <div className="max-w-2xl mx-auto pt-6 h-full flex flex-col">
-      <div className="flex-grow">
+    <div className="max-w-2xl mx-auto pt-6 flex flex-col">
+      <div>
         <h3 className="font-bold text-[#37424A] text-lg border-b pb-4 mb-6">5. Rod Egenskaper</h3>
         <div className="grid grid-cols-2 gap-x-8 gap-y-6">
           <UnitInput label="Diameter" field="diameter" val={data.diameter} baseUnit="cm" altUnit="in" conversion={1 / 2.54} />
@@ -1261,7 +2408,10 @@ function StepRod({ data, setData, onComplete }) {
           </div>
         </div>
       </div>
-      <button onClick={onComplete} className="w-full bg-[#37424A] text-white py-3 rounded font-bold mt-auto">Lagre & Gå til Oversikt</button>
+      <div className="flex gap-4 mt-8">
+        <button onClick={() => onComplete(false)} className="flex-1 bg-gray-200 text-gray-600 py-3 rounded font-bold">Lagre & Oversikt</button>
+        <button onClick={() => onComplete(true)} className="flex-1 bg-[#37424A] text-white py-3 rounded font-bold hover:bg-slate-700">Neste</button>
+      </div>
     </div>
   );
 }
@@ -1283,16 +2433,16 @@ function StepBHA({ data, setData, onComplete }) {
   const totalWeight = tools.reduce((s, t) => s + parseFloat(t.weight || 0), 0);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="flex flex-col">
       <div className="flex justify-between items-end mb-4 shrink-0">
         <div><h3 className="font-bold text-[#37424A] text-xl">BHA Konfigurasjon</h3><p className="text-xs text-gray-500">Bygg verktøystrengen komponent for komponent.</p></div>
         <div className="flex gap-2"><input className="border p-2 rounded text-sm w-64" placeholder="Navn på BHA" value={data.name || ''} onChange={e => setData({ ...data, name: e.target.value })} /></div>
       </div>
-      <div className="flex-grow overflow-hidden border rounded-lg flex flex-col">
+      <div className="flex-grow border rounded-lg flex flex-col">
         <div className="flex bg-gray-100 text-xs font-bold text-gray-600 border-b p-3">
           <div className="flex-[2]">Verktøy Navn</div><div className="flex-1 cursor-pointer hover:text-[#00A99D]" onClick={() => toggleUnit('od')}>OD ({units.od})</div><div className="flex-1 cursor-pointer hover:text-[#00A99D]" onClick={() => toggleUnit('length')}>Lengde ({units.length})</div><div className="flex-1 cursor-pointer hover:text-[#00A99D]" onClick={() => toggleUnit('weight')}>Vekt ({units.weight})</div><div className="w-40 text-center">Handlinger</div>
         </div>
-        <div className="overflow-y-auto flex-grow bg-white">
+        <div className="flex-grow bg-white">
           {tools.length === 0 && <div className="p-8 text-center text-gray-400 text-sm">Ingen verktøy lagt til.</div>}
           {tools.map((tool, i) => (
             <div key={tool.id} className="border-b border-gray-100">
@@ -1338,7 +2488,10 @@ function StepBHA({ data, setData, onComplete }) {
           </div>
         </div>
       </div>
-      <button onClick={onComplete} className={`w-full py-3 rounded font-bold mt-4 bg-[#37424A] text-white`}>Lagre & Gå til Oversikt</button>
+      <div className="flex gap-4 mt-4">
+        <button onClick={() => onComplete(false)} className="flex-1 bg-gray-200 text-gray-600 py-3 rounded font-bold">Lagre & Oversikt</button>
+        <button onClick={() => onComplete(true)} className="flex-1 bg-[#37424A] text-white py-3 rounded font-bold hover:bg-slate-700">Neste</button>
+      </div>
     </div>
   );
 }
@@ -1346,7 +2499,7 @@ function StepBHA({ data, setData, onComplete }) {
 // --- COMPONENT: DASHBOARD ---
 function Dashboard({ onNewWell, wells, onViewWell, onDeleteWell, onEditWell }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const filteredWells = wells.filter(w => w.name.toLowerCase().includes(searchTerm.toLowerCase()) || w.field.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredWells = wells.filter(w => w.name.toLowerCase().includes(searchTerm.toLowerCase()) || (w.rig || w.field || '').toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
     <div className="space-y-6">
@@ -1366,13 +2519,19 @@ function Dashboard({ onNewWell, wells, onViewWell, onDeleteWell, onEditWell }) {
             <div className="absolute top-0 left-0 w-1 h-full bg-[#37424A] group-hover:bg-[#FFC82E] transition-colors"></div>
             <div className="p-6 cursor-pointer" onClick={() => onViewWell(well)}>
               <div className="flex justify-between items-start mb-4">
-                <div><h3 className="font-bold text-lg text-[#37424A]">{well.name}</h3><p className="text-sm text-gray-500">{well.field}</p></div>
+                <div><h3 className="font-bold text-lg text-[#37424A]">{well.name}</h3><p className="text-sm text-gray-500">{well.rig || well.field}</p></div>
                 <div className="bg-gray-100 p-2 rounded-full"><Activity size={20} className="text-[#00A99D]" /></div>
               </div>
               <div className="space-y-2 text-sm text-gray-600 mb-4">
-                <div className="flex items-center gap-2"><MapPin size={16} className="text-gray-400" /> <span>{well.country}</span></div>
-                <div className="flex items-center gap-2"><Database size={16} className="text-gray-400" /> <span>{well.survey?.length || 0} målepunkter</span></div>
-                <div className="flex items-center gap-2"><Layers size={16} className="text-gray-400" /> <span>{well.architecture?.length || 0} casing seksjoner</span></div>
+                <div className="flex items-center gap-2"><Briefcase size={16} className="text-gray-400" /> <span>{well.operator || 'Ukjent operatør'}</span></div>
+                <div className="flex items-center gap-2">
+                  <ArrowRight size={16} className="text-gray-400" />
+                  <span>Lengde: {well.survey?.length > 0 ? Math.max(...well.survey.map(p => p.md)).toFixed(0) : 0} m</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ArrowDown size={16} className="text-gray-400" />
+                  <span>TVD: {well.survey?.length > 0 ? calculateTrajectory(well.survey).pop()?.tvd.toFixed(0) : 0} m</span>
+                </div>
               </div>
               <div className="flex items-center justify-between text-xs text-gray-400 pt-4 border-t border-gray-100">
                 <span>Sist endret: {new Date().toLocaleDateString()}</span>
@@ -1491,11 +2650,11 @@ function StepSurveyImport({ onBack, onNext, existingData }) {
           </div>
         </div>
         <div className="flex flex-col gap-4 h-full min-h-0">
-          <div className="bg-white border rounded-lg flex-1 overflow-hidden flex flex-col">
+          <div className="bg-white border rounded-lg h-[400px] overflow-hidden flex flex-col">
             <div className="bg-gray-100 p-2 text-xs font-bold text-gray-600 border-b flex justify-between shrink-0"><span>Datapunkter</span>{parsedData.length > 0 && <span className="text-[#00A99D] flex items-center gap-1"><Check size={12} /> {parsedData.length} rader</span>}</div>
             <div className="flex-grow overflow-auto"><table className="w-full text-xs text-right"><thead className="bg-gray-50 sticky top-0"><tr><th className="p-2 text-gray-500">#</th><th className="p-2 text-[#37424A]">MD (m)</th><th className="p-2 text-[#37424A]">Inc (deg)</th><th className="p-2 text-[#37424A]">Azi (deg)</th></tr></thead><tbody className="font-mono">{parsedData.map((row, i) => (<tr key={i} className="border-b border-gray-100 hover:bg-yellow-50"><td className="p-2 text-gray-400">{i + 1}</td><td className="p-2">{row.md}</td><td className="p-2">{row.inc}</td><td className="p-2">{row.azi}</td></tr>))}</tbody></table></div>
           </div>
-          <div className="bg-white border rounded-lg flex-1 flex flex-col overflow-hidden">
+          <div className="bg-white border rounded-lg h-[400px] flex flex-col overflow-hidden">
             <div className="bg-gray-100 p-2 text-xs font-bold text-gray-600 border-b flex justify-between items-center shrink-0"><span>Banevisualisering (3D)</span></div>
             <div className="flex-grow relative border border-gray-200 h-[400px]">{parsedData.length === 0 ? (<div className="absolute inset-0 flex items-center justify-center text-gray-300 text-xs">Ingen data å vise</div>) : (<div className="absolute inset-0 bg-white"><WellBore3D points={trajectory3D} /></div>)}</div>
           </div>
@@ -1512,10 +2671,23 @@ function StepSurveyImport({ onBack, onNext, existingData }) {
 // --- COMPONENT: STEP ARCHITECTURE IMPORT (WITH UNIT TOGGLING & ID CALC) ---
 function StepArchitectureImport({ onBack, onFinish, surveyData, initialData, maxDepth }) {
   const [sections, setSections] = useState([]);
-  const [units, setUnits] = useState({ depth: 'm', id: 'cm', od: 'cm', weight: 'kg/m' });
+
+  // Initialize units from saved data or use defaults
+  const [units, setUnits] = useState(() => {
+    if (initialData && initialData.length > 0 && initialData[0].units) {
+      return initialData[0].units;
+    }
+    return { depth: 'm', id: 'cm', od: 'cm', weight: 'kg/m' };
+  });
 
   useEffect(() => {
-    if (initialData && initialData.length > 0) setSections(initialData);
+    if (initialData && initialData.length > 0) {
+      setSections(initialData);
+      // Restore units if they exist
+      if (initialData[0].units) {
+        setUnits(initialData[0].units);
+      }
+    }
   }, [initialData]);
 
   const toggleUnit = (key) => {
@@ -1529,7 +2701,7 @@ function StepArchitectureImport({ onBack, onFinish, surveyData, initialData, max
     nextUnits[key] = newUnit;
     setUnits(nextUnits);
     const updatedSections = sections.map(sec => {
-      let newSec = { ...sec };
+      let newSec = { ...sec, units: nextUnits }; // Save units with each section
       if (key === 'depth') { newSec.start = parseFloat((sec.start * conversionFactor).toFixed(2)); newSec.end = parseFloat((sec.end * conversionFactor).toFixed(2)); }
       else if (key === 'od') { newSec.od = parseFloat((sec.od * conversionFactor).toFixed(3)); newSec.id = calculateIDFromODWeight(newSec.od, newSec.weight, newUnit, units.weight, units.id) || newSec.id; }
       else if (key === 'id') { newSec.id = parseFloat((sec.id * conversionFactor).toFixed(3)); }
@@ -1540,12 +2712,24 @@ function StepArchitectureImport({ onBack, onFinish, surveyData, initialData, max
   };
 
   const addSection = () => {
-    setSections([...sections, { start: sections.length > 0 ? sections[sections.length - 1].end : 0, end: 0, id: 0, od: 0, weight: 0, fricRodRIH: 1.0, fricRodPOOH: 1.0, fricToolRIH: 0.3, fricToolPOOH: 0.3 }]);
+    setSections([...sections, {
+      start: sections.length > 0 ? sections[sections.length - 1].end : 0,
+      end: 0,
+      id: 0,
+      od: 0,
+      weight: 0,
+      fricRodRIH: 1.0,
+      fricRodPOOH: 1.0,
+      fricToolRIH: 0.3,
+      fricToolPOOH: 0.3,
+      units: units // Save current units with the section
+    }]);
   };
   const removeSection = (idx) => { const newSec = [...sections]; newSec.splice(idx, 1); setSections(newSec); };
   const updateSection = (idx, field, value) => {
     const newSec = [...sections];
     newSec[idx][field] = parseFloat(value) || 0;
+    newSec[idx].units = units; // Update units metadata
     if ((field === 'weight' || field === 'od')) {
       let newID = calculateIDFromODWeight(newSec[idx].od, newSec[idx].weight, units.od, units.weight, units.id);
       if (newID !== null) newSec[idx].id = newID;
@@ -1601,7 +2785,7 @@ function CreateWellWizard({ onCancel, onSave, initialData }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState(initialData || {
     id: Math.random().toString(36).substr(2, 9),
-    name: '', field: '', operator: 'Equinor',
+    name: '', rig: '', operator: 'Equinor',
     survey: [], architecture: []
   });
 
@@ -1639,7 +2823,7 @@ function CreateWellWizard({ onCancel, onSave, initialData }) {
   };
 
   return (
-    <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden flex flex-col h-[80vh]">
+    <div className="max-w-7xl mx-auto bg-white rounded-lg shadow-lg flex flex-col">
       <div className="bg-[#37424A] text-white p-6 flex justify-between items-center shrink-0">
         <div><h2 className="text-xl font-bold">{initialData ? 'Rediger Brønn' : 'Ny Brønn'}</h2><p className="text-gray-400 text-sm">Steg {step} av 3</p></div>
         <div className="flex gap-2">
@@ -1647,13 +2831,13 @@ function CreateWellWizard({ onCancel, onSave, initialData }) {
         </div>
       </div>
 
-      <div className="flex-grow overflow-y-auto p-8">
+      <div className="flex-grow p-8">
         {step === 1 && (
           <div className="space-y-6 max-w-lg mx-auto animate-in fade-in slide-in-from-right-8 duration-300">
             <h3 className="text-lg font-bold text-[#37424A] mb-4">Generell Informasjon</h3>
             <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Brønn Navn</label><input type="text" className="w-full border p-3 rounded focus:border-[#FFC82E] outline-none" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} placeholder="E.g. 34/10-A-12" /></div>
-            <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Felt</label><input type="text" className="w-full border p-3 rounded focus:border-[#FFC82E] outline-none" value={data.field} onChange={e => setData({ ...data, field: e.target.value })} placeholder="E.g. Gullfaks" /></div>
-            <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Operatør</label><input list="operators" className="w-full border p-3 rounded focus:border-[#FFC82E] outline-none" value={data.operator} onChange={e => setData({ ...data, operator: e.target.value })} placeholder="Velg eller skriv inn operatør" /><datalist id="operators"><option value="Equinor" /><option value="Aker BP" /><option value="Vår Energi" /><option value="ConocoPhillips" /><option value="Shell" /><option value="TotalEnergies" /><option value="Neptune Energy" /><option value="Wintershall Dea" /></datalist></div>
+            <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">RIG</label><input type="text" className="w-full border p-3 rounded focus:border-[#FFC82E] outline-none" value={data.rig || ''} onChange={e => setData({ ...data, rig: e.target.value })} placeholder="E.g. Gullfaks" /></div>
+            <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Operatør</label><input type="text" className="w-full border p-3 rounded focus:border-[#FFC82E] outline-none" value={data.operator} onChange={e => setData({ ...data, operator: e.target.value })} placeholder="Skriv inn operatør" /></div>
           </div>
         )}
 
@@ -1668,7 +2852,10 @@ function CreateWellWizard({ onCancel, onSave, initialData }) {
         {step === 3 && (
           <StepArchitectureImport
             onBack={() => setStep(2)}
-            onFinish={(archData) => { setData({ ...data, architecture: archData }); handleFinalSave(); }}
+            onFinish={(archData) => {
+              const finalData = { ...data, architecture: archData };
+              onSave(finalData);
+            }}
             surveyData={data.survey}
             initialData={archSections}
             maxDepth={data.survey.length > 0 ? Math.max(...data.survey.map(p => p.md)) : 10000}
@@ -1677,18 +2864,26 @@ function CreateWellWizard({ onCancel, onSave, initialData }) {
       </div>
 
       <div className="bg-gray-50 p-6 border-t border-gray-200 flex justify-between shrink-0">
-        {step > 1 ? <button onClick={() => setStep(step - 1)} className="text-gray-500 font-bold hover:text-[#37424A]">Forrige</button> : <button onClick={onCancel} className="text-gray-500 font-bold hover:text-red-500">Avbryt</button>}
-        {step < 3 ? <button onClick={() => setStep(step + 1)} disabled={step === 1 && !data.name} className={`px-6 py-2 rounded font-bold text-white ${step === 1 && !data.name ? 'bg-gray-300' : 'bg-[#37424A]'}`}>Neste</button> : <button onClick={handleFinalSave} className="bg-[#00A99D] text-white px-8 py-2 rounded font-bold hover:bg-teal-600 shadow-lg">Lagre Brønn</button>}
+        {step === 1 ? (
+          <>
+            <button onClick={onCancel} className="text-gray-500 font-bold hover:text-red-500">Avbryt</button>
+            <button onClick={() => setStep(step + 1)} disabled={!data.name} className={`px-6 py-2 rounded font-bold text-white ${!data.name ? 'bg-gray-300' : 'bg-[#37424A]'}`}>Neste</button>
+          </>
+        ) : (
+          /* Empty div to keep spacing if needed, or just null since child components handle their own nav now */
+          null
+        )}
       </div>
     </div>
   );
 }
 
 // --- COMPONENT: WELL VIEW ---
-function WellView({ well, onBack, onNewRun, onEditRun, onCopyRun, onDeleteRun }) {
+function WellView({ well, onBack, onNewRun, onEditRun, onCopyRun, onDeleteRun, onViewPortalDashboard, onTogglePortal }) {
   const [plotConfig, setPlotConfig] = useState({ x: 'vs', y: 'tvd' });
 
   const trajectory = useMemo(() => {
+    if (!well.survey || well.survey.length === 0) return [];
     const traj = calculateTrajectory(well.survey);
     return traj.map(p => ({
       ...p,
@@ -1726,6 +2921,31 @@ function WellView({ well, onBack, onNewRun, onEditRun, onCopyRun, onDeleteRun })
   // Invert Y axis if TVD is selected (standard oilfield plotting)
   const reversedY = plotConfig.y === 'tvd';
 
+  // If no survey data, show message
+  if (!well.survey || well.survey.length === 0) {
+    return (
+      <div className="space-y-6">
+        <button onClick={onBack} className="text-sm text-gray-500 hover:text-[#37424A] flex items-center gap-1 mb-4">
+          <ArrowRight className="rotate-180" size={14} /> Tilbake til oversikt
+        </button>
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h1 className="text-3xl font-bold text-[#37424A] mb-4">{well.name}</h1>
+          <p className="text-gray-500">{well.rig || well.field} • {well.operator}</p>
+          <div className="mt-8 bg-yellow-50 border-2 border-yellow-200 rounded-lg p-8 text-center">
+            <AlertTriangle size={48} className="mx-auto mb-4 text-yellow-600" />
+            <h2 className="text-2xl font-bold text-yellow-800 mb-3">Ingen survey data</h2>
+            <p className="text-yellow-700">
+              Denne brønnen har ingen survey data enda. Gå til rediger for å importere survey data.
+            </p>
+            <button onClick={() => onEditWell && onEditWell(well)} className="mt-4 bg-[#FFC82E] hover:bg-[#E5B020] text-[#37424A] font-bold py-2 px-6 rounded">
+              Rediger Brønn
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 h-full flex flex-col">
       <div className="flex justify-between items-center">
@@ -1735,12 +2955,36 @@ function WellView({ well, onBack, onNewRun, onEditRun, onCopyRun, onDeleteRun })
         </button>
       </div>
       <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 shrink-0">
-        <div className="flex justify-between items-start"><div><h1 className="text-3xl font-bold text-[#37424A]">{well.name}</h1><p className="text-gray-500">{well.field} • {well.operator}</p></div><div className="text-right"><div className="text-sm text-gray-400">Total Dybde</div><div className="text-xl font-mono font-bold">{Math.max(...well.survey.map(p => p.md), 0).toFixed(0)} m</div></div></div>
+        <div className="flex justify-between items-start"><div><h1 className="text-3xl font-bold text-[#37424A]">{well.name}</h1><p className="text-gray-500">{well.rig || well.field} • {well.operator}</p></div><div className="text-right"><div className="text-sm text-gray-400">Total Dybde</div><div className="text-xl font-mono font-bold">{well.survey && well.survey.length > 0 ? Math.max(...well.survey.map(p => p.md), 0).toFixed(0) : '0'} m</div></div></div>
 
         {/* Row 1: Existing Plots */}
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8 h-64 border-b pb-8 mb-6">
-          <div className="border rounded p-2"><h4 className="text-xs font-bold text-gray-500 mb-2 uppercase">Bane (Inklinasjon)</h4><ResponsiveContainer width="100%" height="90%"><AreaChart data={well.survey}><defs><linearGradient id="colorInc" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#FFC82E" stopOpacity={0.8} /><stop offset="95%" stopColor="#FFC82E" stopOpacity={0} /></linearGradient></defs><XAxis dataKey="md" unit="m" style={{ fontSize: '10px' }} /><YAxis unit="°" style={{ fontSize: '10px' }} /><CartesianGrid strokeDasharray="3 3" /><Tooltip /><Area type="monotone" dataKey="inc" stroke="#FFC82E" fillOpacity={1} fill="url(#colorInc)" /></AreaChart></ResponsiveContainer></div>
-          <div className="border rounded p-2 relative"><h4 className="text-xs font-bold text-gray-500 mb-2 uppercase">Arkitektur (Indre Diameter)</h4><div className="h-full w-full overflow-y-auto space-y-1 pr-2 pb-6">{well.architecture.map((sec, i) => (<div key={i} className="flex items-center gap-2 text-xs"><div className="w-16 text-right font-mono text-gray-400">{sec.start.toFixed(0)}m</div><div className="h-6 bg-[#37424A] rounded-r flex items-center px-2 text-white relative transition-all hover:bg-[#00A99D]" style={{ width: `${Math.min(sec.id * 10, 100)}%` }} >{sec.id}"</div><div className="flex-grow border-b border-dotted border-gray-300"></div><div className="w-16 font-mono text-gray-400">{sec.end.toFixed(0)}m</div></div>))}</div></div>
+          <div className="border rounded p-2"><h4 className="text-xs font-bold text-gray-500 mb-2 uppercase">Bane (Inklinasjon)</h4><ResponsiveContainer width="100%" height="90%">{well.survey && well.survey.length > 0 ? <AreaChart data={well.survey}><defs><linearGradient id="colorInc" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#FFC82E" stopOpacity={0.8} /><stop offset="95%" stopColor="#FFC82E" stopOpacity={0} /></linearGradient></defs><XAxis dataKey="md" unit="m" style={{ fontSize: '10px' }} /><YAxis unit="°" style={{ fontSize: '10px' }} /><CartesianGrid strokeDasharray="3 3" /><Tooltip /><Area type="monotone" dataKey="inc" stroke="#FFC82E" fillOpacity={1} fill="url(#colorInc)" /></AreaChart> : <div className="h-full flex items-center justify-center text-gray-400 text-xs">Ingen survey data</div>}</ResponsiveContainer></div>
+          <div className="border rounded p-2 relative">
+            <h4 className="text-xs font-bold text-gray-500 mb-2 uppercase">Arkitektur (Indre Diameter)</h4>
+            <div className="h-full w-full overflow-y-auto space-y-1 pr-2 pb-6">
+              {(!well.architecture || well.architecture.length === 0) ? (
+                <div className="h-full flex items-center justify-center text-gray-400 text-xs italic">
+                  Ingen arkitektur data registrert
+                </div>
+              ) : (
+                well.architecture.map((sec, i) => {
+                  // Convert ID to inches if stored in cm
+                  const idInInches = sec.units?.id === 'cm' ? sec.id / 2.54 : sec.id;
+                  return (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <div className="w-16 text-right font-mono text-gray-400">{sec.start.toFixed(0)}m</div>
+                      <div className="h-6 bg-[#37424A] rounded-r flex items-center px-2 text-white relative transition-all hover:bg-[#00A99D]" style={{ width: `${Math.min(idInInches * 10, 100)}%` }}>
+                        {idInInches.toFixed(3)}"
+                      </div>
+                      <div className="flex-grow border-b border-dotted border-gray-300"></div>
+                      <div className="w-16 font-mono text-gray-400">{sec.end.toFixed(0)}m</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Row 2: NEW PLOTS (3D & Configurable 2D) */}
@@ -1784,39 +3028,62 @@ function WellView({ well, onBack, onNewRun, onEditRun, onCopyRun, onDeleteRun })
                     }
                     return null;
                   }} />
-                  <Scatter name="Well Path" data={plotData} fill="#37424A" line={{ stroke: '#37424A', strokeWidth: 2 }} shape="circle" />
+                  <Scatter name="Well Path" data={plotData} line={{ stroke: '#37424A', strokeWidth: 3 }} shape={<circle r={6} fill="transparent" stroke="none" />} />
                 </ScatterChart>
               </ResponsiveContainer>
             </div>
           </div>
         </div>
       </div>
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex-grow overflow-hidden flex flex-col">
+
+      {/* Runs List Section */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 mt-6">
         <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
           <h3 className="font-semibold text-gray-700 flex items-center gap-2"><Activity size={18} /> Tilhørende Jobber (Runs)</h3>
         </div>
-        <div className="flex-grow overflow-auto p-4">
+        <div className="p-4 max-h-96 overflow-auto">
           {(!well.jobs || well.jobs.length === 0) ?
-            <p className="text-sm text-gray-500 text-center mt-10">Ingen jobber opprettet for denne brønnen enda.</p>
+            <p className="text-sm text-gray-500 text-center py-10">Ingen jobber opprettet for denne brønnen enda.</p>
             :
             <table className="w-full text-left text-sm">
               <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-200">
-                <tr><th className="px-6 py-3">Mål</th><th className="px-6 py-3">Dybde</th><th className="px-6 py-3">Dato</th><th className="px-6 py-3 text-right">Handling</th></tr>
+                <tr><th className="px-6 py-3">Mål</th><th className="px-6 py-3">Dybde</th><th className="px-6 py-3">Status</th><th className="px-6 py-3">Dato</th><th className="px-6 py-3 text-right">Handling</th></tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {well.jobs.map(job => (
-                  <tr key={job.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">{job.general?.goal}</td>
-                    <td className="px-6 py-4">{job.general?.targetDepth} m</td>
-                    <td className="px-6 py-4">{job.date}</td>
-                    <td className="px-6 py-4 text-right flex justify-end gap-2">
-                      <button onClick={() => onEditRun(job)} className="p-1.5 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded" title="Rediger"><Edit2 size={16} /></button>
-                      <button onClick={() => onCopyRun(job)} className="p-1.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded" title="Kopier"><Copy size={16} /></button>
-                      <button onClick={() => exportToComtrac(well, job)} className="p-1.5 hover:bg-green-50 text-gray-400 hover:text-green-600 rounded" title="Last ned XML"><Download size={16} /></button>
-                      <button onClick={() => onDeleteRun(job.id)} className="p-1.5 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded" title="Slett"><Trash2 size={16} /></button>
-                    </td>
-                  </tr>
-                ))}
+                {well.jobs.map(job => {
+                  // Use explicit completed flags
+                  const jobComplete = [
+                    job.completed?.[1] || false,
+                    job.completed?.[2] || false,
+                    job.completed?.[3] || false,
+                    job.completed?.[4] || false,
+                    job.completed?.[5] || false,
+                    job.completed?.[6] || false
+                  ];
+                  const completedSteps = jobComplete.filter(Boolean).length;
+                  const isFullyComplete = completedSteps === 6;
+
+                  return (
+                    <tr key={job.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4">{job.general?.goal}</td>
+                      <td className="px-6 py-4">{job.general?.targetDepth} m</td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isFullyComplete ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                          {isFullyComplete ? <Check size={12} /> : <AlertTriangle size={12} />}
+                          {isFullyComplete ? 'Fullført' : `${completedSteps}/6 steg`}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">{job.date}</td>
+                      <td className="px-6 py-4 text-right flex justify-end gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); onTogglePortal(job.id, !(job.fieldPortalEnabled !== false)); }} className={`p-1.5 rounded ${job.fieldPortalEnabled !== false ? 'text-green-600 hover:bg-green-50' : 'text-gray-300 hover:bg-gray-100'}`} title={job.fieldPortalEnabled !== false ? 'Deaktiver Portal' : 'Aktiver Portal'}>{job.fieldPortalEnabled !== false ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}</button>
+                        <button onClick={(e) => { e.stopPropagation(); onEditRun(job); }} className="p-1.5 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded" title="Rediger"><Edit2 size={16} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); onCopyRun(job); }} className="p-1.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded" title="Kopier"><Copy size={16} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); exportToComtrac(well, job); }} className="p-1.5 hover:bg-green-50 text-gray-400 hover:text-green-600 rounded" title="Last ned XML"><Download size={16} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); onDeleteRun(job.id); }} className="p-1.5 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded" title="Slett"><Trash2 size={16} /></button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           }
